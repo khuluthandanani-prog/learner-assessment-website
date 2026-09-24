@@ -13,8 +13,49 @@ $$('.tabs button').forEach(b=>b.onclick=()=>show(b.dataset.t));if(location.searc
 $('#rf').elements.role.onchange=e=>$('#cd').hidden=e.target.value!=='lecturer';
 function enter(x){localStorage.setItem('rise_session',JSON.stringify({id:x.id,name:x.name,role:x.role}));location.href=x.role+'.html'}
 $('#lf').onsubmit=e=>{e.preventDefault();const f=e.target.elements,x=DB.get('users').find(u=>u.email===f.email.value.trim().toLowerCase()&&u.pass===f.pass.value);if(!x)return alert('Wrong email or password.');if(x.status==='pending')return alert('Your account is awaiting approval by your lecturer.');if(x.status==='blocked')return alert('Your account has been blocked. Contact your lecturer.');enter(x)};
-$('#rf').onsubmit=e=>{e.preventDefault();const f=e.target.elements,U=DB.get('users'),em=f.email.value.trim().toLowerCase();
-if(U.some(u=>u.email===em))return alert('Email already registered.');
-if(f.role.value==='lecturer'&&f.code.value!==CODE)return alert('Invalid lecturer code.');
-const x={id:uid(),name:f.name.value.trim(),email:em,pass:f.pass.value,role:f.role.value,status:f.role.value==='learner'?'pending':'approved'};U.push(x);DB.set('users',U);if(x.status==='pending'){alert('Registered! Your lecturer must approve your account before you can log in.');e.target.reset();show('l')}else enter(x)};
-</script></body></html>
+$('#rf').onsubmit=async e=>{
+  e.preventDefault();
+
+  const f=e.target.elements;
+  const name=f.name.value.trim();
+  const email=f.email.value.trim().toLowerCase();
+  const password=f.pass.value;
+  const role=f.role.value;
+
+  if(role==='lecturer' && f.code.value!==CODE){
+    return alert('Invalid lecturer code.');
+  }
+
+  try{
+    const response=await fetch(
+      'https://rise-collective-assessments-api.onrender.com/api/register',
+      {
+        method:'POST',
+        headers:{
+          'Content-Type':'application/json'
+        },
+        body:JSON.stringify({
+          name:name,
+          email:email,
+          password:password,
+          role:role
+        })
+      }
+    );
+
+    const result=await response.json();
+
+    if(!response.ok){
+      return alert(result.message || 'Registration failed.');
+    }
+
+    alert(result.message);
+
+    e.target.reset();
+    show('l');
+
+  }catch(error){
+    console.error(error);
+    alert('Unable to connect to the registration server. Please try again.');
+  }
+};
