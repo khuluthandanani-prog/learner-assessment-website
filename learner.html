@@ -1,0 +1,17 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Learner | RISE COLLECTIVE</title><link rel="stylesheet" href="style.css"></head><body>
+<header class="top"><div class="brand"><span class="logo"></span><div>RISE COLLECTIVE<small>LEARNER PORTAL</small></div></div><div>👤 <span id="who"></span> <button class="btn sm" onclick="logout()">Logout</button></div></header>
+<main><h2>My Assessments</h2><div id="list"></div></main>
+<script src="app.js"></script><script>
+const u=guard('learner');
+function render(){const A=DB.get('assess'),S=DB.get('subs').filter(s=>s.uid===u.id);
+$('#list').innerHTML=A.length?A.map(a=>{const s=S.find(x=>x.aid===a.id),late=new Date(a.due)<new Date();
+const st=s?(s.mark!=null?`<span class="tag ok">Marked ${s.mark}/${a.total}</span>`:'<span class="tag">Submitted</span>'):(late?'<span class="tag bad">Overdue</span>':'<span class="tag warn">Pending</span>');
+return `<div class="card"><div class="row"><h3>${esc(a.title)}</h3>${st}</div><p>${esc(a.desc)}</p><p class="m">Due: ${fmt(a.due)} · Total: ${a.total} marks</p>${fileLink(a.file)}
+${s?`<p class="m">Submitted ${fmt(s.at)} ${fileLink(s.file)}</p>`:''}${s&&s.feedback?`<div class="fb"><b>Feedback:</b> ${esc(s.feedback)}</div>`:''}
+${s&&s.mark!=null?'':`<details><summary>${s?'Resubmit':'Submit work'}</summary><form data-id="${a.id}"><textarea name="t" placeholder="Comments / answer (optional)">${esc(s?s.text:'')}</textarea><input type="file" name="f"><button class="btn">Submit</button></form></details>`}</div>`}).join(''):'<p class="m">No assessments yet.</p>'}
+document.addEventListener('submit',async e=>{e.preventDefault();const f=e.target.elements,id=e.target.dataset.id;let file;try{file=await readFile(f.f.files[0])}catch(x){return alert(x)}
+let subs=DB.get('subs');const old=subs.find(s=>s.aid===id&&s.uid===u.id);
+if(!file&&!f.t.value.trim()&&!(old&&old.file))return alert('Add text or a file.');
+const rec={id:old?old.id:uid(),aid:id,uid:u.id,name:u.name,text:f.t.value,file:file||(old?old.file:null),at:new Date().toISOString(),mark:null,feedback:''};
+subs=subs.filter(s=>!(s.aid===id&&s.uid===u.id));subs.push(rec);DB.set('subs',subs);alert('Submitted!');render()});
+render();</script></body></html>

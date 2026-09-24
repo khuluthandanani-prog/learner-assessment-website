@@ -1,0 +1,18 @@
+:root{--navy:#0f1b3d;--purple:#3b1f6e;--gold:#c9a227;--bg:#f6f4fb;--w:#fff}
+*{box-sizing:border-box}body{margin:0;font-family:Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--navy)}
+.top{background:linear-gradient(90deg,var(--navy),var(--purple));color:#fff;display:flex;align-items:center;justify-content:space-between;padding:10px 18px;border-bottom:3px solid var(--gold);gap:10px;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;letter-spacing:2px}.brand small{display:block;color:var(--gold);font-size:.6rem;letter-spacing:3px}
+.logo svg{width:42px;height:42px;display:block}.big svg{width:80px;height:80px}
+main{max-width:1000px;margin:20px auto;padding:0 14px}
+.card{background:var(--w);border-radius:12px;padding:16px;margin-bottom:14px;box-shadow:0 2px 8px #3b1f6e22;border-left:4px solid var(--gold)}
+.row{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}h3{margin:0}
+.m,small{color:#667}.btn{background:var(--gold);color:var(--navy);border:0;border-radius:8px;padding:9px 16px;font-weight:700;cursor:pointer;text-decoration:none;display:inline-block}
+.btn.sm{padding:5px 10px;font-size:.8rem}.btn.ghost{background:var(--purple);color:#fff}.btn:hover{filter:brightness(1.08)}
+input,textarea,select{width:100%;padding:9px;border:1px solid #cdc6e0;border-radius:8px;margin:5px 0 10px;font:inherit}
+textarea{min-height:70px}label{font-weight:600;font-size:.85rem}
+.tag{background:#eee;padding:3px 10px;border-radius:20px;font-size:.75rem;font-weight:700}.ok{background:#d8f3dc;color:#1b5e20}.warn{background:#fff3cd;color:#7a5b00}.bad{background:#fde0e0;color:#a00}
+.fb{background:#f0ebfa;border-radius:8px;padding:8px;margin:8px 0}
+.tabs{display:flex;gap:6px;margin-bottom:14px}.tabs button{flex:1;padding:10px;border:0;border-radius:8px;background:#e5def5;color:var(--purple);font-weight:700;cursor:pointer}.tabs button.on{background:var(--purple);color:var(--gold)}
+.table{overflow-x:auto}table{width:100%;border-collapse:collapse;background:#fff;border-radius:10px}th{background:var(--navy);color:var(--gold);text-align:left}th,td{padding:8px;border-bottom:1px solid #eee;vertical-align:top;font-size:.85rem}td input{width:70px}td textarea{min-height:50px;min-width:160px}
+.login{max-width:400px;margin:30px auto;text-align:center}.login .card{text-align:left}.login h1{color:var(--purple);margin:8px 0}
+details summary{cursor:pointer;color:var(--purple);font-weight:700;margin-top:8px}

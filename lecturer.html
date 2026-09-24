@@ -1,0 +1,31 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Lecturer | RISE COLLECTIVE</title><link rel="stylesheet" href="style.css"></head><body>
+<header class="top"><div class="brand"><span class="logo"></span><div>RISE COLLECTIVE<small>LECTURER / ADMIN</small></div></div><div>👤 <span id="who"></span> <button class="btn sm" onclick="logout()">Logout</button></div></header>
+<main><div class="tabs"><button data-t="ap" class="on">Assessments</button><button data-t="sp">Submissions & Marking</button><button data-t="lp" id="lt">Learners</button></div>
+<div id="ap" class="pane"><div class="card"><h3>New assessment</h3><form id="af"><label>Title</label><input name="ttl" required><label>Instructions</label><textarea name="desc"></textarea>
+<div class="row"><div><label>Total marks</label><input name="total" type="number" min="1" value="100" required></div><div><label>Deadline</label><input name="due" type="datetime-local" required></div></div>
+<label>Attach file (optional, max 1.5MB)</label><input name="file" type="file"><button class="btn">Publish</button></form></div><div id="al"></div>
+<p class="m">Share this link with learners so they can register: <b id="lnk"></b></p></div>
+<div id="lp" class="pane" hidden><div id="ll"></div></div>
+<div id="sp" class="pane" hidden><label>Assessment</label><select id="sel"></select><div id="sub"></div></div></main>
+<script src="app.js"></script><script>
+guard('lecturer');let cur=null;
+$('#lnk').textContent=location.href.replace('lecturer.html','index.html?register');
+function tab(n){$$('.pane').forEach(p=>p.hidden=p.id!==n);$$('.tabs button').forEach(b=>b.classList.toggle('on',b.dataset.t===n));render()}
+$$('.tabs button').forEach(b=>b.onclick=()=>tab(b.dataset.t));
+$('#sel').onchange=e=>{cur=e.target.value;render()};
+$('#af').onsubmit=async e=>{e.preventDefault();const f=e.target.elements;let file;try{file=await readFile(f.file.files[0])}catch(x){return alert(x)}
+const A=DB.get('assess');A.push({id:uid(),title:f.ttl.value,desc:f.desc.value,total:+f.total.value,due:f.due.value,file,created:new Date().toISOString()});DB.set('assess',A);e.target.reset();render()};
+function setSt(id,st){const U=DB.get('users');U.find(x=>x.id===id).status=st;DB.set('users',U);render()}
+function delU(id){if(!confirm('Delete this learner and their submissions?'))return;DB.set('users',DB.get('users').filter(x=>x.id!==id));DB.set('subs',DB.get('subs').filter(s=>s.uid!==id));render()}
+function resetPw(id){const p=prompt('New password (min 6 characters):');if(!p)return;if(p.length<6)return alert('Too short.');const U=DB.get('users');U.find(x=>x.id===id).pass=p;DB.set('users',U);alert('Password changed. Tell the learner.')}
+function view(id){cur=id;tab('sp')}
+function del(id){if(!confirm('Delete assessment and its submissions?'))return;DB.set('assess',DB.get('assess').filter(a=>a.id!==id));DB.set('subs',DB.get('subs').filter(s=>s.aid!==id));render()}
+function save(id,tot){const m=$('#m'+id).value,S=DB.get('subs'),s=S.find(x=>x.id===id);if(m===''||+m<0||+m>tot)return alert('Mark must be 0–'+tot);s.mark=+m;s.feedback=$('#f'+id).value;s.markedAt=new Date().toISOString();DB.set('subs',S);alert('Saved');render()}
+function render(){const A=DB.get('assess'),S=DB.get('subs'),L=DB.get('users').filter(u=>u.role==='learner');
+$('#al').innerHTML=A.map(a=>{const n=S.filter(s=>s.aid===a.id).length;return `<div class="card"><div class="row"><h3>${esc(a.title)}</h3><span class="tag">${n}/${L.length} submitted</span></div><p>${esc(a.desc)}</p><p class="m">Due ${fmt(a.due)} · ${a.total} marks</p>${fileLink(a.file)} <button class="btn sm ghost" onclick="view('${a.id}')">Mark</button> <button class="btn sm ghost" onclick="del('${a.id}')">Delete</button></div>`}).join('')||'<p class="m">No assessments yet.</p>';
+const pend=L.filter(l=>l.status==='pending').length;$('#lt').textContent='Learners'+(pend?' ('+pend+' pending)':'');
+$('#ll').innerHTML=L.length?`<div class="table"><table><tr><th>Name</th><th>Email</th><th>Status</th><th>Actions</th></tr>${L.map(l=>{const st=l.status||'approved';return `<tr><td>${esc(l.name)}</td><td>${esc(l.email)}</td><td><span class="tag ${st==='approved'?'ok':st==='pending'?'warn':'bad'}">${st}</span></td><td>${st!=='approved'?`<button class="btn sm" onclick="setSt('${l.id}','approved')">${st==='pending'?'Approve':'Unblock'}</button> `:`<button class="btn sm ghost" onclick="setSt('${l.id}','blocked')">Block</button> `}<button class="btn sm ghost" onclick="resetPw('${l.id}')">Reset password</button> <button class="btn sm ghost" onclick="delU('${l.id}')">Delete</button></td></tr>`}).join('')}</table></div>`:'<p class="m">No learners registered yet.</p>';
+const sel=$('#sel');sel.innerHTML=A.map(a=>`<option value="${a.id}">${esc(a.title)}</option>`).join('');if(cur&&A.some(a=>a.id===cur))sel.value=cur;cur=sel.value;
+const a=A.find(x=>x.id===cur);
+$('#sub').innerHTML=!a?'<p class="m">Create an assessment first.</p>':`<div class="table"><table><tr><th>Learner</th><th>Status</th><th>Work</th><th>Mark /${a.total}</th><th>Feedback</th><th></th></tr>${L.map(l=>{const s=S.find(x=>x.aid===a.id&&x.uid===l.id);return `<tr><td>${esc(l.name)}<br><small>${esc(l.email)}</small></td><td>${s?(s.mark!=null?'<span class="tag ok">Marked</span>':'<span class="tag">Submitted</span><br><small>'+fmt(s.at)+'</small>'):'<span class="tag bad">Not submitted</span>'}</td><td>${s?esc(s.text).slice(0,120)+' '+fileLink(s.file):''}</td>${s?`<td><input type="number" min="0" max="${a.total}" value="${s.mark==null?'':s.mark}" id="m${s.id}"></td><td><textarea id="f${s.id}">${esc(s.feedback)}</textarea></td><td><button class="btn sm" onclick="save('${s.id}',${a.total})">Save</button></td>`:'<td></td><td></td><td></td>'}</tr>`}).join('')}</table></div>`}
+render();</script></body></html>

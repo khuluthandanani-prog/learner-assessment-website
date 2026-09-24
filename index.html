@@ -1,0 +1,20 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>RISE COLLECTIVE Portal</title><link rel="stylesheet" href="style.css"></head><body>
+<div class="login"><div class="logo big"></div><h1>RISE COLLECTIVE</h1><p class="m">Assessment Portal</p>
+<div class="card"><div class="tabs"><button class="on" data-t="l">Login</button><button data-t="r">Register</button></div>
+<form id="lf"><label>Email</label><input name="email" type="email" required><label>Password</label><input name="pass" type="password" required><button class="btn" style="width:100%">Login</button></form>
+<form id="rf" hidden><label>Full name</label><input name="name" required><label>Email</label><input name="email" type="email" required><label>Password</label><input name="pass" type="password" minlength="6" required>
+<label>I am a</label><select name="role"><option value="learner">Learner</option><option value="lecturer">Lecturer / Admin</option></select>
+<div id="cd" hidden><label>Lecturer access code</label><input name="code" placeholder="Ask the administrator"></div><button class="btn" style="width:100%">Create account</button></form></div></div>
+<script src="app.js"></script><script>
+const u=me();if(u)location.href=u.role+'.html';
+const CODE='RISE2026';
+function show(t){$('#lf').hidden=t!=='l';$('#rf').hidden=t!=='r';$$('.tabs button').forEach(b=>b.classList.toggle('on',b.dataset.t===t))}
+$$('.tabs button').forEach(b=>b.onclick=()=>show(b.dataset.t));if(location.search.includes('register'))show('r');
+$('#rf').elements.role.onchange=e=>$('#cd').hidden=e.target.value!=='lecturer';
+function enter(x){localStorage.setItem('rise_session',JSON.stringify({id:x.id,name:x.name,role:x.role}));location.href=x.role+'.html'}
+$('#lf').onsubmit=e=>{e.preventDefault();const f=e.target.elements,x=DB.get('users').find(u=>u.email===f.email.value.trim().toLowerCase()&&u.pass===f.pass.value);if(!x)return alert('Wrong email or password.');if(x.status==='pending')return alert('Your account is awaiting approval by your lecturer.');if(x.status==='blocked')return alert('Your account has been blocked. Contact your lecturer.');enter(x)};
+$('#rf').onsubmit=e=>{e.preventDefault();const f=e.target.elements,U=DB.get('users'),em=f.email.value.trim().toLowerCase();
+if(U.some(u=>u.email===em))return alert('Email already registered.');
+if(f.role.value==='lecturer'&&f.code.value!==CODE)return alert('Invalid lecturer code.');
+const x={id:uid(),name:f.name.value.trim(),email:em,pass:f.pass.value,role:f.role.value,status:f.role.value==='learner'?'pending':'approved'};U.push(x);DB.set('users',U);if(x.status==='pending'){alert('Registered! Your lecturer must approve your account before you can log in.');e.target.reset();show('l')}else enter(x)};
+</script></body></html>
