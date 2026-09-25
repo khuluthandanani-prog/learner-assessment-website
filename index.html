@@ -1,61 +1,393 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>RISE COLLECTIVE Portal</title><link rel="stylesheet" href="style.css"></head><body>
-<div class="login"><div class="logo big"></div><h1>RISE COLLECTIVE</h1><p class="m">Assessment Portal</p>
-<div class="card"><div class="tabs"><button class="on" data-t="l">Login</button><button data-t="r">Register</button></div>
-<form id="lf"><label>Email</label><input name="email" type="email" required><label>Password</label><input name="pass" type="password" required><button class="btn" style="width:100%">Login</button></form>
-<form id="rf" hidden><label>Full name</label><input name="name" required><label>Email</label><input name="email" type="email" required><label>Password</label><input name="pass" type="password" minlength="6" required>
-<label>I am a</label><select name="role"><option value="learner">Learner</option><option value="lecturer">Lecturer / Admin</option></select>
-<div id="cd" hidden><label>Lecturer access code</label><input name="code" placeholder="Ask the administrator"></div><button class="btn" style="width:100%">Create account</button></form></div></div>
-<script src="app.js"></script><script>
-const u=me();if(u)location.href=u.role+'.html';
-const CODE='RISE2026';
-function show(t){$('#lf').hidden=t!=='l';$('#rf').hidden=t!=='r';$$('.tabs button').forEach(b=>b.classList.toggle('on',b.dataset.t===t))}
-$$('.tabs button').forEach(b=>b.onclick=()=>show(b.dataset.t));if(location.search.includes('register'))show('r');
-$('#rf').elements.role.onchange=e=>$('#cd').hidden=e.target.value!=='lecturer';
-function enter(x){localStorage.setItem('rise_session',JSON.stringify({id:x.id,name:x.name,role:x.role}));location.href=x.role+'.html'}
-$('#lf').onsubmit=e=>{e.preventDefault();const f=e.target.elements,x=DB.get('users').find(u=>u.email===f.email.value.trim().toLowerCase()&&u.pass===f.pass.value);if(!x)return alert('Wrong email or password.');if(x.status==='pending')return alert('Your account is awaiting approval by your lecturer.');if(x.status==='blocked')return alert('Your account has been blocked. Contact your lecturer.');enter(x)};
-$('#rf').onsubmit=async e=>{
+```html
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>RISE COLLECTIVE Portal</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+
+<div class="login">
+
+  <div class="logo big"></div>
+
+  <h1>RISE COLLECTIVE</h1>
+  <p class="m">Assessment Portal</p>
+
+  <div class="card">
+
+    <div class="tabs">
+      <button class="on" data-t="l">Login</button>
+      <button data-t="r">Register</button>
+    </div>
+
+
+    <!-- LOGIN -->
+
+    <form id="lf">
+
+      <label>Email</label>
+      <input
+        name="email"
+        type="email"
+        required
+      >
+
+      <label>Password</label>
+      <input
+        name="pass"
+        type="password"
+        required
+      >
+
+      <button
+        class="btn"
+        style="width:100%"
+      >
+        Login
+      </button>
+
+    </form>
+
+
+    <!-- REGISTER -->
+
+    <form id="rf" hidden>
+
+      <label>Full name</label>
+      <input
+        name="name"
+        required
+      >
+
+      <label>Email</label>
+      <input
+        name="email"
+        type="email"
+        required
+      >
+
+      <label>Password</label>
+      <input
+        name="pass"
+        type="password"
+        minlength="6"
+        required
+      >
+
+      <label>I am a</label>
+
+      <select name="role">
+
+        <option value="learner">
+          Learner
+        </option>
+
+        <option value="lecturer">
+          Lecturer / Admin
+        </option>
+
+      </select>
+
+
+      <div id="cd" hidden>
+
+        <label>Lecturer access code</label>
+
+        <input
+          name="code"
+          placeholder="Ask the administrator"
+        >
+
+      </div>
+
+
+      <button
+        class="btn"
+        style="width:100%"
+      >
+        Create account
+      </button>
+
+    </form>
+
+  </div>
+
+</div>
+
+
+<script src="app.js"></script>
+
+<script>
+
+const API =
+  'https://rise-collective-assessments-api.onrender.com';
+
+
+/* CHECK EXISTING SESSION */
+
+const u = me();
+
+if (u) {
+  location.href = u.role + '.html';
+}
+
+
+/* LECTURER ACCESS CODE */
+
+const CODE = 'RISE2026';
+
+
+/* SWITCH LOGIN / REGISTER */
+
+function show(t) {
+
+  $('#lf').hidden = t !== 'l';
+
+  $('#rf').hidden = t !== 'r';
+
+  $$('.tabs button').forEach(b => {
+
+    b.classList.toggle(
+      'on',
+      b.dataset.t === t
+    );
+
+  });
+
+}
+
+
+/* TAB BUTTONS */
+
+$$('.tabs button').forEach(b => {
+
+  b.onclick = () => show(b.dataset.t);
+
+});
+
+
+/* OPEN REGISTER TAB */
+
+if (location.search.includes('register')) {
+
+  show('r');
+
+}
+
+
+/* SHOW LECTURER CODE */
+
+$('#rf').elements.role.onchange = e => {
+
+  $('#cd').hidden =
+    e.target.value !== 'lecturer';
+
+};
+
+
+/* SAVE LOGIN SESSION */
+
+function enter(x) {
+
+  localStorage.setItem(
+    'rise_session',
+    JSON.stringify({
+      id: x.id,
+      name: x.name,
+      email: x.email,
+      role: x.role
+    })
+  );
+
+  location.href =
+    x.role + '.html';
+
+}
+
+
+/* =========================
+   LOGIN
+   ========================= */
+
+$('#lf').onsubmit = async e => {
+
   e.preventDefault();
 
-  const f=e.target.elements;
-  const name=f.name.value.trim();
-  const email=f.email.value.trim().toLowerCase();
-  const password=f.pass.value;
-  const role=f.role.value;
+  const f = e.target.elements;
 
-  if(role==='lecturer' && f.code.value!==CODE){
-    return alert('Invalid lecturer code.');
-  }
+  const email =
+    f.email.value.trim().toLowerCase();
 
-  try{
-    const response=await fetch(
-      'https://rise-collective-assessments-api.onrender.com/api/register',
+  const password =
+    f.pass.value;
+
+
+  try {
+
+    const response = await fetch(
+      API + '/api/login',
       {
-        method:'POST',
-        headers:{
-          'Content-Type':'application/json'
+        method: 'POST',
+
+        headers: {
+          'Content-Type':
+            'application/json'
         },
-        body:JSON.stringify({
-          name:name,
-          email:email,
-          password:password,
-          role:role
+
+        body: JSON.stringify({
+          email: email,
+          password: password
         })
       }
     );
 
-    const result=await response.json();
 
-    if(!response.ok){
-      return alert(result.message || 'Registration failed.');
+    const result =
+      await response.json();
+
+
+    if (!response.ok) {
+
+      return alert(
+        result.message ||
+        'Login failed.'
+      );
+
     }
+
+
+    enter(result.user);
+
+
+  } catch (error) {
+
+    console.error(
+      'Login error:',
+      error
+    );
+
+    alert(
+      'Unable to connect to the login server. Please try again.'
+    );
+
+  }
+
+};
+
+
+/* =========================
+   REGISTRATION
+   ========================= */
+
+$('#rf').onsubmit = async e => {
+
+  e.preventDefault();
+
+  const f =
+    e.target.elements;
+
+
+  const name =
+    f.name.value.trim();
+
+  const email =
+    f.email.value.trim().toLowerCase();
+
+  const password =
+    f.pass.value;
+
+  const role =
+    f.role.value;
+
+
+  /* CHECK LECTURER CODE */
+
+  if (
+    role === 'lecturer' &&
+    f.code.value !== CODE
+  ) {
+
+    return alert(
+      'Invalid lecturer code.'
+    );
+
+  }
+
+
+  try {
+
+    const response =
+      await fetch(
+        API + '/api/register',
+        {
+          method: 'POST',
+
+          headers: {
+            'Content-Type':
+              'application/json'
+          },
+
+          body: JSON.stringify({
+
+            name: name,
+
+            email: email,
+
+            password: password,
+
+            role: role
+
+          })
+        }
+      );
+
+
+    const result =
+      await response.json();
+
+
+    if (!response.ok) {
+
+      return alert(
+        result.message ||
+        'Registration failed.'
+      );
+
+    }
+
 
     alert(result.message);
 
+
     e.target.reset();
+
+
     show('l');
 
-  }catch(error){
-    console.error(error);
-    alert('Unable to connect to the registration server. Please try again.');
+
+  } catch (error) {
+
+    console.error(
+      'Registration error:',
+      error
+    );
+
+
+    alert(
+      'Unable to connect to the registration server. Please try again.'
+    );
+
   }
+
 };
+
+</script>
+
+</body>
+</html>
+```
