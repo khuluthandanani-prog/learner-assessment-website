@@ -21,8 +21,8 @@
   <div class="card">
 
     <div class="tabs">
-      <button class="on" data-t="l">Login</button>
-      <button data-t="r">Register</button>
+      <button type="button" class="on" data-t="l">Login</button>
+      <button type="button" data-t="r">Register</button>
     </div>
 
 
@@ -31,6 +31,7 @@
     <form id="lf">
 
       <label>Email</label>
+
       <input
         name="email"
         type="email"
@@ -38,6 +39,7 @@
       >
 
       <label>Password</label>
+
       <input
         name="pass"
         type="password"
@@ -45,6 +47,7 @@
       >
 
       <button
+        type="submit"
         class="btn"
         style="width:100%"
       >
@@ -59,12 +62,14 @@
     <form id="rf" hidden>
 
       <label>Full name</label>
+
       <input
         name="name"
         required
       >
 
       <label>Email</label>
+
       <input
         name="email"
         type="email"
@@ -72,6 +77,7 @@
       >
 
       <label>Password</label>
+
       <input
         name="pass"
         type="password"
@@ -107,6 +113,7 @@
 
 
       <button
+        type="submit"
         class="btn"
         style="width:100%"
       >
@@ -125,266 +132,261 @@
 <script>
 
 const API =
-  'https://rise-collective-assessments-api.onrender.com';
+  "https://rise-collective-assessments-api.onrender.com";
+
+const CODE = "RISE2026";
 
 
-/* CHECK EXISTING SESSION */
+/* LOGIN / REGISTER TABS */
 
-const u = me();
+function show(type) {
 
-if (u) {
-  location.href = u.role + '.html';
-}
+  document.getElementById("lf").hidden =
+    type !== "l";
 
+  document.getElementById("rf").hidden =
+    type !== "r";
 
-/* LECTURER ACCESS CODE */
+  document.querySelectorAll(".tabs button")
+    .forEach(button => {
 
-const CODE = 'RISE2026';
+      button.classList.toggle(
+        "on",
+        button.dataset.t === type
+      );
 
-
-/* SWITCH LOGIN / REGISTER */
-
-function show(t) {
-
-  $('#lf').hidden = t !== 'l';
-
-  $('#rf').hidden = t !== 'r';
-
-  $$('.tabs button').forEach(b => {
-
-    b.classList.toggle(
-      'on',
-      b.dataset.t === t
-    );
-
-  });
+    });
 
 }
 
 
 /* TAB BUTTONS */
 
-$$('.tabs button').forEach(b => {
+document.querySelectorAll(".tabs button")
+  .forEach(button => {
 
-  b.onclick = () => show(b.dataset.t);
+    button.addEventListener(
+      "click",
+      function () {
 
-});
+        show(this.dataset.t);
 
+      }
+    );
 
-/* OPEN REGISTER TAB */
-
-if (location.search.includes('register')) {
-
-  show('r');
-
-}
-
-
-/* SHOW LECTURER CODE */
-
-$('#rf').elements.role.onchange = e => {
-
-  $('#cd').hidden =
-    e.target.value !== 'lecturer';
-
-};
+  });
 
 
-/* SAVE LOGIN SESSION */
+/* LECTURER CODE */
 
-function enter(x) {
+document.querySelector(
+  '#rf select[name="role"]'
+).addEventListener(
+  "change",
+  function () {
 
-  localStorage.setItem(
-    'rise_session',
-    JSON.stringify({
-      id: x.id,
-      name: x.name,
-      email: x.email,
-      role: x.role
-    })
-  );
+    document.getElementById("cd").hidden =
+      this.value !== "lecturer";
 
-  location.href =
-    x.role + '.html';
-
-}
+  }
+);
 
 
 /* =========================
    LOGIN
    ========================= */
 
-$('#lf').onsubmit = async e => {
+document.getElementById("lf")
+  .addEventListener(
+    "submit",
+    async function (event) {
 
-  e.preventDefault();
+      event.preventDefault();
 
-  const f = e.target.elements;
+      const email =
+        this.elements.email.value
+          .trim()
+          .toLowerCase();
 
-  const email =
-    f.email.value.trim().toLowerCase();
-
-  const password =
-    f.pass.value;
+      const password =
+        this.elements.pass.value;
 
 
-  try {
+      try {
 
-    const response = await fetch(
-      API + '/api/login',
-      {
-        method: 'POST',
+        const response =
+          await fetch(
+            API + "/api/login",
+            {
+              method: "POST",
 
-        headers: {
-          'Content-Type':
-            'application/json'
-        },
+              headers: {
+                "Content-Type":
+                  "application/json"
+              },
 
-        body: JSON.stringify({
-          email: email,
-          password: password
-        })
+              body: JSON.stringify({
+                email: email,
+                password: password
+              })
+            }
+          );
+
+
+        const result =
+          await response.json();
+
+
+        if (!response.ok) {
+
+          alert(
+            result.message ||
+            "Login failed."
+          );
+
+          return;
+
+        }
+
+
+        localStorage.setItem(
+          "rise_session",
+          JSON.stringify({
+            id: result.user.id,
+            name: result.user.name,
+            email: result.user.email,
+            role: result.user.role
+          })
+        );
+
+
+        if (result.user.role === "learner") {
+
+          window.location.href =
+            "learner.html";
+
+        } else {
+
+          window.location.href =
+            "lecturer.html";
+
+        }
+
       }
-    );
 
+      catch (error) {
 
-    const result =
-      await response.json();
+        console.error(error);
 
+        alert(
+          "Unable to connect to the login server."
+        );
 
-    if (!response.ok) {
-
-      return alert(
-        result.message ||
-        'Login failed.'
-      );
+      }
 
     }
-
-
-    enter(result.user);
-
-
-  } catch (error) {
-
-    console.error(
-      'Login error:',
-      error
-    );
-
-    alert(
-      'Unable to connect to the login server. Please try again.'
-    );
-
-  }
-
-};
+  );
 
 
 /* =========================
    REGISTRATION
    ========================= */
 
-$('#rf').onsubmit = async e => {
+document.getElementById("rf")
+  .addEventListener(
+    "submit",
+    async function (event) {
 
-  e.preventDefault();
+      event.preventDefault();
 
-  const f =
-    e.target.elements;
+      const name =
+        this.elements.name.value.trim();
 
+      const email =
+        this.elements.email.value
+          .trim()
+          .toLowerCase();
 
-  const name =
-    f.name.value.trim();
+      const password =
+        this.elements.pass.value;
 
-  const email =
-    f.email.value.trim().toLowerCase();
-
-  const password =
-    f.pass.value;
-
-  const role =
-    f.role.value;
-
-
-  /* CHECK LECTURER CODE */
-
-  if (
-    role === 'lecturer' &&
-    f.code.value !== CODE
-  ) {
-
-    return alert(
-      'Invalid lecturer code.'
-    );
-
-  }
+      const role =
+        this.elements.role.value;
 
 
-  try {
+      if (
+        role === "lecturer" &&
+        this.elements.code.value !== CODE
+      ) {
 
-    const response =
-      await fetch(
-        API + '/api/register',
-        {
-          method: 'POST',
+        alert(
+          "Invalid lecturer code."
+        );
 
-          headers: {
-            'Content-Type':
-              'application/json'
-          },
+        return;
 
-          body: JSON.stringify({
+      }
 
-            name: name,
 
-            email: email,
+      try {
 
-            password: password,
+        const response =
+          await fetch(
+            API + "/api/register",
+            {
+              method: "POST",
 
-            role: role
+              headers: {
+                "Content-Type":
+                  "application/json"
+              },
 
-          })
+              body: JSON.stringify({
+                name: name,
+                email: email,
+                password: password,
+                role: role
+              })
+            }
+          );
+
+
+        const result =
+          await response.json();
+
+
+        if (!response.ok) {
+
+          alert(
+            result.message ||
+            "Registration failed."
+          );
+
+          return;
+
         }
-      );
 
 
-    const result =
-      await response.json();
+        alert(result.message);
 
+        this.reset();
 
-    if (!response.ok) {
+        show("l");
 
-      return alert(
-        result.message ||
-        'Registration failed.'
-      );
+      }
+
+      catch (error) {
+
+        console.error(error);
+
+        alert(
+          "Unable to connect to the registration server."
+        );
+
+      }
 
     }
-
-
-    alert(result.message);
-
-
-    e.target.reset();
-
-
-    show('l');
-
-
-  } catch (error) {
-
-    console.error(
-      'Registration error:',
-      error
-    );
-
-
-    alert(
-      'Unable to connect to the registration server. Please try again.'
-    );
-
-  }
-
-};
+  );
 
 </script>
 
