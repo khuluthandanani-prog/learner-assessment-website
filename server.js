@@ -16,6 +16,27 @@ const pool = new Pool({
   }
 });
 
+// Test database connection
+app.get("/api/health", async (req, res) => {
+  try {
+    await pool.query("SELECT 1");
+
+    res.json({
+      success: true,
+      message: "RISE COLLECTIVE backend and database are connected."
+    });
+  } catch (error) {
+    console.error("Database connection error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Database connection failed.",
+      error: error.message
+    });
+  }
+});
+
+// Create users table
 async function setupDatabase() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
@@ -29,24 +50,10 @@ async function setupDatabase() {
     )
   `);
 
-  console.log("Database table ready.");
-}
-
-app.get("/api/health", async (req, res) => {
-  try {
-    await pool.query("SELECT 1");
-    res.json({
-      success: true,
-      message: "RISE COLLECTIVE backend and database are connected."
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: "Database connection failed."
-    });
-  }
+  console.log("Users table is ready.");
 });
 
+// Register learner
 app.post("/api/register", async (req, res) => {
   try {
     const { name, email, password, role } = req.body;
