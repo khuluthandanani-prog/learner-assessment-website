@@ -16,7 +16,10 @@ const pool = new Pool({
   }
 });
 
-// Test database connection
+// ===============================
+// DATABASE HEALTH CHECK
+// ===============================
+
 app.get("/api/health", async (req, res) => {
   try {
     await pool.query("SELECT 1");
@@ -25,19 +28,24 @@ app.get("/api/health", async (req, res) => {
       success: true,
       message: "RISE COLLECTIVE backend and database are connected."
     });
+
   } catch (error) {
+
     console.error("Database connection error:", error);
 
     res.status(500).json({
       success: false,
-      message: "Database connection failed.",
-      error: error.message
+      message: "Database connection failed."
     });
   }
 });
 
-// Create users table
+// ===============================
+// CREATE DATABASE TABLE
+// ===============================
+
 async function setupDatabase() {
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
       id SERIAL PRIMARY KEY,
@@ -51,14 +59,25 @@ async function setupDatabase() {
   `);
 
   console.log("Users table is ready.");
-});
+}
 
-// Register learner
+// ===============================
+// REGISTER
+// ===============================
+
 app.post("/api/register", async (req, res) => {
+
   try {
-    const { name, email, password, role } = req.body;
+
+    const {
+      name,
+      email,
+      password,
+      role
+    } = req.body;
 
     if (!name || !email || !password || !role) {
+
       return res.status(400).json({
         success: false,
         message: "Please complete all required fields."
@@ -66,6 +85,7 @@ app.post("/api/register", async (req, res) => {
     }
 
     if (password.length < 6) {
+
       return res.status(400).json({
         success: false,
         message: "Password must contain at least 6 characters."
@@ -81,6 +101,7 @@ app.post("/api/register", async (req, res) => {
     );
 
     if (existing.rows.length > 0) {
+
       return res.status(409).json({
         success: false,
         message: "Email already registered."
@@ -89,26 +110,41 @@ app.post("/api/register", async (req, res) => {
 
     const passwordHash = await bcrypt.hash(password, 10);
 
-    const status = role === "learner" ? "pending" : "approved";
+    const status =
+      role === "learner"
+        ? "pending"
+        : "approved";
 
     const result = await pool.query(
-      `INSERT INTO users
-       (name, email, password_hash, role, status)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING id, name, email, role, status, created_at`,
-      [cleanName, cleanEmail, passwordHash, role, status]
+      `
+      INSERT INTO users
+      (name, email, password_hash, role, status)
+      VALUES ($1, $2, $3, $4, $5)
+      RETURNING id, name, email, role, status, created_at
+      `,
+      [
+        cleanName,
+        cleanEmail,
+        passwordHash,
+        role,
+        status
+      ]
     );
 
     res.status(201).json({
+
       success: true,
+
       message:
         role === "learner"
           ? "Registration successful. Your lecturer must approve your account."
           : "Account created successfully.",
+
       user: result.rows[0]
     });
 
   } catch (error) {
+
     console.error("Registration error:", error);
 
     res.status(500).json({
@@ -118,12 +154,130 @@ app.post("/api/register", async (req, res) => {
   }
 });
 
-app.listen(PORT, async () => {
-  console.log(`Server running on port ${PORT}`);
+// ===============================
+// LOGIN
+// ===============================
+
+app.post("/api/login", async (req, res) => {
 
   try {
-    await setupDatabase();
+
+    const {
+      email,
+      password
+    } = req.body;
+
+    if (!email || !password) {
+
+      return res.status(400).json({
+        success: false,
+        message: "Email and password are required."
+      });
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+
+    const result = await pool.query(
+      `
+      SELECT
+        id,
+        name,
+        email,
+        password_hash,
+        role,
+        status
+      FROM users
+      WHERE email = $1
+      `,
+      [cleanEmail]
+    );
+
+    if (result.rows.length === 0) {
+
+      return res.status(401).json({
+        success: false,
+        message: "Wrong email or password."
+      });
+    }
+
+    const user = result.rows[0];
+
+    const passwordCorrect =
+      await bcrypt.compare(
+        password,
+        user.password_hash
+      );
+
+    if (!passwordCorrect) {
+
+      return res.status(401).json({
+        success: false,
+        message: "Wrong email or password."
+      });
+    }
+
+    if (user.status === "pending") {
+
+      return res.status(403).json({
+        success: false,
+        message:
+          "Your account is awaiting approval by your lecturer."
+      });
+    }
+
+    if (user.status === "blocked") {
+
+      return res.status(403).json({
+        success: false,
+        message:
+          "Your account has been blocked. Contact your lecturer."
+      });
+    }
+
+    res.json({
+
+      success: true,
+
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        status: user.status
+      }
+
+    });
+
   } catch (error) {
-    console.error("Database setup failed:", error);
+
+    console.error("Login error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Unable to log in."
+    });
+  }
+});
+
+// ===============================
+// START SERVER
+// ===============================
+
+app.listen(PORT, async () => {
+
+  console.log(
+    `Server running on port ${PORT}`
+  );
+
+  try {
+
+    await setupDatabase();
+
+  } catch (error) {
+
+    console.error(
+      "Database setup failed:",
+      error
+    );
   }
 });
