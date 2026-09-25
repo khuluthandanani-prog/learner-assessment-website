@@ -5,23 +5,10 @@ const bcrypt = require("bcryptjs");
 const { Pool } = require("pg");
 
 const app = express();
-
 const PORT = process.env.PORT || 10000;
-
-// ==========================================
-// MIDDLEWARE
-// ==========================================
 
 app.use(cors());
 app.use(express.json());
-
-// ==========================================
-// DATABASE CONNECTION
-// ==========================================
-
-if (!process.env.DATABASE_URL) {
-  console.error("DATABASE_URL environment variable is missing.");
-}
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -36,17 +23,18 @@ const pool = new Pool({
 
 async function setupDatabase() {
   try {
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS users (
-        id SERIAL PRIMARY KEY,
-        name VARCHAR(150) NOT NULL,
-        email VARCHAR(255) UNIQUE NOT NULL,
-        password_hash TEXT NOT NULL,
-        role VARCHAR(30) NOT NULL DEFAULT 'learner',
-        status VARCHAR(30) NOT NULL DEFAULT 'pending',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
+    const sql =
+      "CREATE TABLE IF NOT EXISTS users (" +
+      "id SERIAL PRIMARY KEY, " +
+      "name VARCHAR(150) NOT NULL, " +
+      "email VARCHAR(255) UNIQUE NOT NULL, " +
+      "password_hash TEXT NOT NULL, " +
+      "role VARCHAR(30) NOT NULL DEFAULT 'learner', " +
+      "status VARCHAR(30) NOT NULL DEFAULT 'pending', " +
+      "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP" +
+      ")";
+
+    await pool.query(sql);
 
     console.log("Users table is ready.");
   } catch (error) {
@@ -68,7 +56,7 @@ app.get("/api/health", async (req, res) => {
       message: "RISE COLLECTIVE backend and database are connected."
     });
   } catch (error) {
-    console.error("Database health check error:", error);
+    console.error("Database connection error:", error);
 
     res.status(500).json({
       success: false,
@@ -83,16 +71,7 @@ app.get("/api/health", async (req, res) => {
 
 app.post("/api/register", async (req, res) => {
   try {
-    const {
-      name,
-      email,
-      password,
-      role
-    } = req.body;
-
-    // ------------------------------------------
-    // REQUIRED FIELDS
-    // ------------------------------------------
+    const { name, email, password, role } = req.body;
 
     if (!name || !email || !password || !role) {
       return res.status(400).json({
@@ -101,49 +80,12 @@ app.post("/api/register", async (req, res) => {
       });
     }
 
-    // ------------------------------------------
-    // CLEAN INPUT
-    // ------------------------------------------
-
-    const cleanName = String(name).trim();
-    const cleanEmail = String(email).trim().toLowerCase();
-
-    // ------------------------------------------
-    // VALIDATE NAME
-    // ------------------------------------------
-
-    if (cleanName.length < 2) {
-      return res.status(400).json({
-        success: false,
-        message: "Please enter a valid name."
-      });
-    }
-
-    // ------------------------------------------
-    // VALIDATE EMAIL
-    // ------------------------------------------
-
-    if (!cleanEmail.includes("@")) {
-      return res.status(400).json({
-        success: false,
-        message: "Please enter a valid email address."
-      });
-    }
-
-    // ------------------------------------------
-    // VALIDATE ROLE
-    // ------------------------------------------
-
     if (!["learner", "lecturer"].includes(role)) {
       return res.status(400).json({
         success: false,
         message: "Invalid account type."
       });
     }
-
-    // ------------------------------------------
-    // VALIDATE PASSWORD
-    // ------------------------------------------
 
     if (String(password).length < 6) {
       return res.status(400).json({
@@ -152,36 +94,16 @@ app.post("/api/register", async (req, res) => {
       });
     }
 
-    // ------------------------------------------
-    // CHECK EXISTING USER
-    // ------------------------------------------
+    const cleanName = String(name).trim();
+    const cleanEmail = String(email).trim().toLowerCase();
 
-    const existingResult = await pool.query(
-      `
-      SELECT
-        id,
-        name,
-        email,
-        password_hash,
-        role,
-        status,
-        created_at
-      FROM users
-      WHERE email = $1
-      `,
+    const existing = await pool.query(
+      "SELECT id, name, email, role, status FROM users WHERE email = $1",
       [cleanEmail]
     );
 
-    // ==========================================
-    // EXISTING ACCOUNT
-    // ==========================================
-
-    if (existingResult.rows.length > 0) {
-      const existingUser = existingResult.rows[0];
-
-      // ----------------------------------------
-      // EXISTING LECTURER
-      // ----------------------------------------
+    if (existing.rows.length > 0) {
+      const existingUser = existing.rows[0];
 
       if (existingUser.role === "lecturer") {
         return res.status(409).json({
@@ -190,10 +112,6 @@ app.post("/api/register", async (req, res) => {
             "This email already belongs to a lecturer/admin account. Please use Login."
         });
       }
-
-      // ----------------------------------------
-      // EXISTING LEARNER RE-REGISTRATION
-      // ----------------------------------------
 
       if (
         existingUser.role === "learner" &&
@@ -204,22 +122,8 @@ app.post("/api/register", async (req, res) => {
           10
         );
 
-        const updatedResult = await pool.query(
-          `
-          UPDATE users
-          SET
-            name = $1,
-            password_hash = $2,
-            status = 'pending'
-          WHERE id = $3
-          RETURNING
-            id,
-            name,
-            email,
-            role,
-            status,
-            created_at
-          `,
+        const updated = await pool.query(
+          "UPDATE users SET name = $1, password_hash = $2, status = 'pending' WHERE id = $3 RETURNING id, name, email, role, status, created_at",
           [
             cleanName,
             passwordHash,
@@ -231,13 +135,9 @@ app.post("/api/register", async (req, res) => {
           success: true,
           message:
             "Your learner account has been re-registered. Please wait for your lecturer to approve your account.",
-          user: updatedResult.rows[0]
+          user: updated.rows[0]
         });
       }
-
-      // ----------------------------------------
-      // SAFETY CHECK
-      // ----------------------------------------
 
       return res.status(409).json({
         success: false,
@@ -245,46 +145,16 @@ app.post("/api/register", async (req, res) => {
       });
     }
 
-    // ==========================================
-    // CREATE NEW ACCOUNT
-    // ==========================================
-
     const passwordHash = await bcrypt.hash(
       String(password),
       10
     );
 
     const status =
-      role === "learner"
-        ? "pending"
-        : "approved";
+      role === "learner" ? "pending" : "approved";
 
     const result = await pool.query(
-      `
-      INSERT INTO users
-      (
-        name,
-        email,
-        password_hash,
-        role,
-        status
-      )
-      VALUES
-      (
-        $1,
-        $2,
-        $3,
-        $4,
-        $5
-      )
-      RETURNING
-        id,
-        name,
-        email,
-        role,
-        status,
-        created_at
-      `,
+      "INSERT INTO users (name, email, password_hash, role, status) VALUES ($1, $2, $3, $4, $5) RETURNING id, name, email, role, status, created_at",
       [
         cleanName,
         cleanEmail,
@@ -319,14 +189,7 @@ app.post("/api/register", async (req, res) => {
 
 app.post("/api/login", async (req, res) => {
   try {
-    const {
-      email,
-      password
-    } = req.body;
-
-    // ------------------------------------------
-    // REQUIRED FIELDS
-    // ------------------------------------------
+    const { email, password } = req.body;
 
     if (!email || !password) {
       return res.status(400).json({
@@ -339,28 +202,10 @@ app.post("/api/login", async (req, res) => {
       .trim()
       .toLowerCase();
 
-    // ------------------------------------------
-    // FIND USER
-    // ------------------------------------------
-
     const result = await pool.query(
-      `
-      SELECT
-        id,
-        name,
-        email,
-        password_hash,
-        role,
-        status
-      FROM users
-      WHERE email = $1
-      `,
+      "SELECT id, name, email, password_hash, role, status FROM users WHERE email = $1",
       [cleanEmail]
     );
-
-    // ------------------------------------------
-    // USER NOT FOUND
-    // ------------------------------------------
 
     if (result.rows.length === 0) {
       return res.status(401).json({
@@ -370,10 +215,6 @@ app.post("/api/login", async (req, res) => {
     }
 
     const user = result.rows[0];
-
-    // ------------------------------------------
-    // CHECK PASSWORD
-    // ------------------------------------------
 
     const passwordCorrect = await bcrypt.compare(
       String(password),
@@ -387,10 +228,6 @@ app.post("/api/login", async (req, res) => {
       });
     }
 
-    // ------------------------------------------
-    // PENDING ACCOUNT
-    // ------------------------------------------
-
     if (user.status === "pending") {
       return res.status(403).json({
         success: false,
@@ -399,10 +236,6 @@ app.post("/api/login", async (req, res) => {
       });
     }
 
-    // ------------------------------------------
-    // BLOCKED ACCOUNT
-    // ------------------------------------------
-
     if (user.status === "blocked") {
       return res.status(403).json({
         success: false,
@@ -410,10 +243,6 @@ app.post("/api/login", async (req, res) => {
           "Your account has been blocked. Contact your lecturer."
       });
     }
-
-    // ------------------------------------------
-    // SUCCESSFUL LOGIN
-    // ------------------------------------------
 
     return res.json({
       success: true,
@@ -437,24 +266,13 @@ app.post("/api/login", async (req, res) => {
 });
 
 // ==========================================
-// GET ALL LEARNERS
+// GET LEARNERS
 // ==========================================
 
 app.get("/api/users", async (req, res) => {
   try {
     const result = await pool.query(
-      `
-      SELECT
-        id,
-        name,
-        email,
-        role,
-        status,
-        created_at
-      FROM users
-      WHERE role = 'learner'
-      ORDER BY created_at DESC
-      `
+      "SELECT id, name, email, role, status, created_at FROM users WHERE role = 'learner' ORDER BY created_at DESC"
     );
 
     return res.json({
@@ -480,10 +298,6 @@ app.patch("/api/users/:id/status", async (req, res) => {
   try {
     const { status } = req.body;
 
-    // ------------------------------------------
-    // VALIDATE STATUS
-    // ------------------------------------------
-
     if (!["approved", "blocked"].includes(status)) {
       return res.status(400).json({
         success: false,
@@ -491,33 +305,13 @@ app.patch("/api/users/:id/status", async (req, res) => {
       });
     }
 
-    // ------------------------------------------
-    // UPDATE USER
-    // ------------------------------------------
-
     const result = await pool.query(
-      `
-      UPDATE users
-      SET status = $1
-      WHERE id = $2
-      AND role = 'learner'
-      RETURNING
-        id,
-        name,
-        email,
-        role,
-        status,
-        created_at
-      `,
+      "UPDATE users SET status = $1 WHERE id = $2 AND role = 'learner' RETURNING id, name, email, role, status, created_at",
       [
         status,
         req.params.id
       ]
     );
-
-    // ------------------------------------------
-    // LEARNER NOT FOUND
-    // ------------------------------------------
 
     if (result.rows.length === 0) {
       return res.status(404).json({
@@ -552,18 +346,9 @@ app.patch("/api/users/:id/status", async (req, res) => {
 app.delete("/api/users/:id", async (req, res) => {
   try {
     const result = await pool.query(
-      `
-      DELETE FROM users
-      WHERE id = $1
-      AND role = 'learner'
-      RETURNING id
-      `,
+      "DELETE FROM users WHERE id = $1 AND role = 'learner' RETURNING id",
       [req.params.id]
     );
-
-    // ------------------------------------------
-    // LEARNER NOT FOUND
-    // ------------------------------------------
 
     if (result.rows.length === 0) {
       return res.status(404).json({
@@ -600,11 +385,7 @@ async function startServer() {
     });
 
   } catch (error) {
-    console.error(
-      "Server could not start because the database setup failed:",
-      error
-    );
-
+    console.error("Server startup failed:", error);
     process.exit(1);
   }
 }
