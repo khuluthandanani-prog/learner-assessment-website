@@ -1,4 +1,3 @@
-```javascript
 const express = require("express");
 const cors = require("cors");
 const bcrypt = require("bcryptjs");
@@ -105,6 +104,7 @@ app.post("/api/register", async (req, res) => {
     if (existing.rows.length > 0) {
       const existingUser = existing.rows[0];
 
+      // Lecturer already exists
       if (existingUser.role === "lecturer") {
         return res.status(409).json({
           success: false,
@@ -113,6 +113,7 @@ app.post("/api/register", async (req, res) => {
         });
       }
 
+      // Existing learner registers again
       if (
         existingUser.role === "learner" &&
         role === "learner"
@@ -380,8 +381,8 @@ async function startServer() {
   try {
     await setupDatabase();
 
-    app.listen(PORT, "0.0.0.0", () => {
-      console.log(`Server running on port ${PORT}`);
+    app.listen(PORT, "0.0.0.0", function () {
+      console.log("Server running on port " + PORT);
     });
 
   } catch (error) {
@@ -391,4 +392,3 @@ async function startServer() {
 }
 
 startServer();
-```
