@@ -1,3 +1,4 @@
+```javascript
 const express = require("express");
 const cors = require("cors");
 const bcrypt = require("bcryptjs");
@@ -81,6 +82,14 @@ app.post("/api/register", async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "Please complete all required fields."
+      });
+    }
+
+    if (!["learner", "lecturer"].includes(role)) {
+
+      return res.status(400).json({
+        success: false,
+        message: "Invalid account type."
       });
     }
 
@@ -259,6 +268,155 @@ app.post("/api/login", async (req, res) => {
   }
 });
 
+// ==================================================
+// LEARNER MANAGEMENT
+// ==================================================
+
+// ===============================
+// GET ALL LEARNERS
+// ===============================
+
+app.get("/api/users", async (req, res) => {
+
+  try {
+
+    const result = await pool.query(`
+      SELECT
+        id,
+        name,
+        email,
+        role,
+        status,
+        created_at
+      FROM users
+      WHERE role = 'learner'
+      ORDER BY created_at DESC
+    `);
+
+    res.json({
+      success: true,
+      users: result.rows
+    });
+
+  } catch (error) {
+
+    console.error("Load learners error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Unable to load learners."
+    });
+  }
+});
+
+// ===============================
+// UPDATE LEARNER STATUS
+// ===============================
+
+app.patch("/api/users/:id/status", async (req, res) => {
+
+  try {
+
+    const { status } = req.body;
+
+    if (!["approved", "blocked"].includes(status)) {
+
+      return res.status(400).json({
+        success: false,
+        message: "Invalid learner status."
+      });
+    }
+
+    const result = await pool.query(
+      `
+      UPDATE users
+      SET status = $1
+      WHERE id = $2
+      AND role = 'learner'
+      RETURNING
+        id,
+        name,
+        email,
+        role,
+        status,
+        created_at
+      `,
+      [
+        status,
+        req.params.id
+      ]
+    );
+
+    if (result.rows.length === 0) {
+
+      return res.status(404).json({
+        success: false,
+        message: "Learner not found."
+      });
+    }
+
+    res.json({
+      success: true,
+      message:
+        status === "approved"
+          ? "Learner approved successfully."
+          : "Learner blocked successfully.",
+      user: result.rows[0]
+    });
+
+  } catch (error) {
+
+    console.error("Status update error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Unable to update learner status."
+    });
+  }
+});
+
+// ===============================
+// DELETE LEARNER
+// ===============================
+
+app.delete("/api/users/:id", async (req, res) => {
+
+  try {
+
+    const result = await pool.query(
+      `
+      DELETE FROM users
+      WHERE id = $1
+      AND role = 'learner'
+      RETURNING id
+      `,
+      [req.params.id]
+    );
+
+    if (result.rows.length === 0) {
+
+      return res.status(404).json({
+        success: false,
+        message: "Learner not found."
+      });
+    }
+
+    res.json({
+      success: true,
+      message: "Learner deleted successfully."
+    });
+
+  } catch (error) {
+
+    console.error("Delete learner error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Unable to delete learner."
+    });
+  }
+});
+
 // ===============================
 // START SERVER
 // ===============================
@@ -281,3 +439,4 @@ app.listen(PORT, async () => {
     );
   }
 });
+```
