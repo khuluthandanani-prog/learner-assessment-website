@@ -77,6 +77,10 @@ app.post("/api/register", async (req, res) => {
       role
     } = req.body;
 
+    // -------------------------------
+    // CHECK REQUIRED FIELDS
+    // -------------------------------
+
     if (!name || !email || !password || !role) {
 
       return res.status(400).json({
@@ -84,6 +88,10 @@ app.post("/api/register", async (req, res) => {
         message: "Please complete all required fields."
       });
     }
+
+    // -------------------------------
+    // CHECK ROLE
+    // -------------------------------
 
     if (!["learner", "lecturer"].includes(role)) {
 
@@ -93,52 +101,204 @@ app.post("/api/register", async (req, res) => {
       });
     }
 
+    // -------------------------------
+    // CHECK PASSWORD
+    // -------------------------------
+
     if (password.length < 6) {
 
       return res.status(400).json({
         success: false,
-        message: "Password must contain at least 6 characters."
+        message:
+          "Password must contain at least 6 characters."
       });
     }
 
-    const cleanName = name.trim();
-    const cleanEmail = email.trim().toLowerCase();
+    const cleanName =
+      name.trim();
 
-    const existing = await pool.query(
-      "SELECT id FROM users WHERE email = $1",
-      [cleanEmail]
-    );
+    const cleanEmail =
+      email.trim().toLowerCase();
+
+    // -------------------------------
+    // FIND EXISTING ACCOUNT
+    // -------------------------------
+
+    const existing =
+      await pool.query(
+        `
+        SELECT
+          id,
+          name,
+          email,
+          password_hash,
+          role,
+          status
+        FROM users
+        WHERE email = $1
+        `,
+        [cleanEmail]
+      );
+
+
+    // ==================================================
+    // EXISTING ACCOUNT FOUND
+    // ==================================================
 
     if (existing.rows.length > 0) {
 
+      const existingUser =
+        existing.rows[0];
+
+
+      // -----------------------------------------------
+      // EXISTING LECTURER / ADMIN
+      // -----------------------------------------------
+
+      if (existingUser.role === "lecturer") {
+
+        return res.status(409).json({
+
+          success: false,
+
+          message:
+            "This email already belongs to a lecturer/admin account. Please use Login."
+
+        });
+
+      }
+
+
+      // -----------------------------------------------
+      // EXISTING LEARNER
+      // -----------------------------------------------
+
+      if (
+        existingUser.role === "learner" &&
+        role === "learner"
+      ) {
+
+        const passwordHash =
+          await bcrypt.hash(
+            password,
+            10
+          );
+
+
+        const updated =
+          await pool.query(
+            `
+            UPDATE users
+
+            SET
+              name = $1,
+              password_hash = $2,
+              status = 'pending'
+
+            WHERE id = $3
+
+            RETURNING
+              id,
+              name,
+              email,
+              role,
+              status,
+              created_at
+            `,
+            [
+              cleanName,
+              passwordHash,
+              existingUser.id
+            ]
+          );
+
+
+        return res.status(200).json({
+
+          success: true,
+
+          message:
+            "Your learner account has been re-registered. Please wait for your lecturer to approve your account.",
+
+          user:
+            updated.rows[0]
+
+        });
+
+      }
+
+
+      // -----------------------------------------------
+      // SAFETY CHECK
+      // -----------------------------------------------
+
       return res.status(409).json({
+
         success: false,
-        message: "Email already registered."
+
+        message:
+          "This email is already registered."
+
       });
+
     }
 
-    const passwordHash = await bcrypt.hash(password, 10);
+
+    // ==================================================
+    // NEW ACCOUNT
+    // ==================================================
+
+    const passwordHash =
+      await bcrypt.hash(
+        password,
+        10
+      );
+
 
     const status =
       role === "learner"
         ? "pending"
         : "approved";
 
-    const result = await pool.query(
-      `
-      INSERT INTO users
-      (name, email, password_hash, role, status)
-      VALUES ($1, $2, $3, $4, $5)
-      RETURNING id, name, email, role, status, created_at
-      `,
-      [
-        cleanName,
-        cleanEmail,
-        passwordHash,
-        role,
-        status
-      ]
-    );
+
+    const result =
+      await pool.query(
+        `
+        INSERT INTO users
+        (
+          name,
+          email,
+          password_hash,
+          role,
+          status
+        )
+
+        VALUES
+        (
+          $1,
+          $2,
+          $3,
+          $4,
+          $5
+        )
+
+        RETURNING
+          id,
+          name,
+          email,
+          role,
+          status,
+          created_at
+        `,
+        [
+          cleanName,
+          cleanEmail,
+          passwordHash,
+          role,
+          status
+        ]
+      );
+
 
     res.status(201).json({
 
@@ -149,19 +309,32 @@ app.post("/api/register", async (req, res) => {
           ? "Registration successful. Your lecturer must approve your account."
           : "Account created successfully.",
 
-      user: result.rows[0]
+      user:
+        result.rows[0]
+
     });
+
 
   } catch (error) {
 
-    console.error("Registration error:", error);
+    console.error(
+      "Registration error:",
+      error
+    );
 
     res.status(500).json({
+
       success: false,
-      message: "Unable to complete registration."
+
+      message:
+        "Unable to complete registration."
+
     });
+
   }
+
 });
+
 
 // ===============================
 // LOGIN
@@ -176,40 +349,61 @@ app.post("/api/login", async (req, res) => {
       password
     } = req.body;
 
+
     if (!email || !password) {
 
       return res.status(400).json({
+
         success: false,
-        message: "Email and password are required."
+
+        message:
+          "Email and password are required."
+
       });
+
     }
 
-    const cleanEmail = email.trim().toLowerCase();
 
-    const result = await pool.query(
-      `
-      SELECT
-        id,
-        name,
-        email,
-        password_hash,
-        role,
-        status
-      FROM users
-      WHERE email = $1
-      `,
-      [cleanEmail]
-    );
+    const cleanEmail =
+      email.trim().toLowerCase();
+
+
+    const result =
+      await pool.query(
+        `
+        SELECT
+          id,
+          name,
+          email,
+          password_hash,
+          role,
+          status
+
+        FROM users
+
+        WHERE email = $1
+        `,
+        [cleanEmail]
+      );
+
 
     if (result.rows.length === 0) {
 
       return res.status(401).json({
+
         success: false,
-        message: "Wrong email or password."
+
+        message:
+          "Wrong email or password."
+
       });
+
     }
 
-    const user = result.rows[0];
+
+    const user =
+      result.rows[0];
+
 
     const passwordCorrect =
       await bcrypt.compare(
@@ -217,60 +411,107 @@ app.post("/api/login", async (req, res) => {
         user.password_hash
       );
 
+
     if (!passwordCorrect) {
 
       return res.status(401).json({
+
         success: false,
-        message: "Wrong email or password."
+
+        message:
+          "Wrong email or password."
+
       });
+
     }
+
+
+    // -------------------------------
+    // PENDING
+    // -------------------------------
 
     if (user.status === "pending") {
 
       return res.status(403).json({
+
         success: false,
+
         message:
           "Your account is awaiting approval by your lecturer."
+
       });
+
     }
+
+
+    // -------------------------------
+    // BLOCKED
+    // -------------------------------
 
     if (user.status === "blocked") {
 
       return res.status(403).json({
+
         success: false,
+
         message:
           "Your account has been blocked. Contact your lecturer."
+
       });
+
     }
+
+
+    // -------------------------------
+    // SUCCESSFUL LOGIN
+    // -------------------------------
 
     res.json({
 
       success: true,
 
       user: {
+
         id: user.id,
+
         name: user.name,
+
         email: user.email,
+
         role: user.role,
+
         status: user.status
+
       }
 
     });
 
+
   } catch (error) {
 
-    console.error("Login error:", error);
+    console.error(
+      "Login error:",
+      error
+    );
 
     res.status(500).json({
+
       success: false,
-      message: "Unable to log in."
+
+      message:
+        "Unable to log in."
+
     });
+
   }
+
 });
+
 
 // ==================================================
 // LEARNER MANAGEMENT
 // ==================================================
+
 
 // ===============================
 // GET ALL LEARNERS
@@ -280,163 +521,265 @@ app.get("/api/users", async (req, res) => {
 
   try {
 
-    const result = await pool.query(`
-      SELECT
-        id,
-        name,
-        email,
-        role,
-        status,
-        created_at
-      FROM users
-      WHERE role = 'learner'
-      ORDER BY created_at DESC
-    `);
+    const result =
+      await pool.query(
+        `
+        SELECT
+          id,
+          name,
+          email,
+          role,
+          status,
+          created_at
+
+        FROM users
+
+        WHERE role = 'learner'
+
+        ORDER BY created_at DESC
+        `
+      );
+
 
     res.json({
+
       success: true,
-      users: result.rows
+
+      users:
+        result.rows
+
     });
+
 
   } catch (error) {
 
-    console.error("Load learners error:", error);
+    console.error(
+      "Load learners error:",
+      error
+    );
 
     res.status(500).json({
+
       success: false,
-      message: "Unable to load learners."
+
+      message:
+        "Unable to load learners."
+
     });
+
   }
+
 });
+
 
 // ===============================
 // UPDATE LEARNER STATUS
 // ===============================
 
-app.patch("/api/users/:id/status", async (req, res) => {
+app.patch(
+  "/api/users/:id/status",
+  async (req, res) => {
 
-  try {
+    try {
 
-    const { status } = req.body;
+      const {
+        status
+      } = req.body;
 
-    if (!["approved", "blocked"].includes(status)) {
 
-      return res.status(400).json({
-        success: false,
-        message: "Invalid learner status."
+      if (
+        !["approved", "blocked"]
+          .includes(status)
+      ) {
+
+        return res.status(400).json({
+
+          success: false,
+
+          message:
+            "Invalid learner status."
+
+        });
+
+      }
+
+
+      const result =
+        await pool.query(
+          `
+          UPDATE users
+
+          SET status = $1
+
+          WHERE id = $2
+          AND role = 'learner'
+
+          RETURNING
+            id,
+            name,
+            email,
+            role,
+            status,
+            created_at
+          `,
+          [
+            status,
+            req.params.id
+          ]
+        );
+
+
+      if (
+        result.rows.length === 0
+      ) {
+
+        return res.status(404).json({
+
+          success: false,
+
+          message:
+            "Learner not found."
+
+        });
+
+      }
+
+
+      res.json({
+
+        success: true,
+
+        message:
+          status === "approved"
+            ? "Learner approved successfully."
+            : "Learner blocked successfully.",
+
+        user:
+          result.rows[0]
+
       });
+
+
+    } catch (error) {
+
+      console.error(
+        "Status update error:",
+        error
+      );
+
+      res.status(500).json({
+
+        success: false,
+
+        message:
+          "Unable to update learner status."
+
+      });
+
     }
 
-    const result = await pool.query(
-      `
-      UPDATE users
-      SET status = $1
-      WHERE id = $2
-      AND role = 'learner'
-      RETURNING
-        id,
-        name,
-        email,
-        role,
-        status,
-        created_at
-      `,
-      [
-        status,
-        req.params.id
-      ]
-    );
-
-    if (result.rows.length === 0) {
-
-      return res.status(404).json({
-        success: false,
-        message: "Learner not found."
-      });
-    }
-
-    res.json({
-      success: true,
-      message:
-        status === "approved"
-          ? "Learner approved successfully."
-          : "Learner blocked successfully.",
-      user: result.rows[0]
-    });
-
-  } catch (error) {
-
-    console.error("Status update error:", error);
-
-    res.status(500).json({
-      success: false,
-      message: "Unable to update learner status."
-    });
   }
-});
+);
+
 
 // ===============================
 // DELETE LEARNER
 // ===============================
 
-app.delete("/api/users/:id", async (req, res) => {
+app.delete(
+  "/api/users/:id",
+  async (req, res) => {
 
-  try {
+    try {
 
-    const result = await pool.query(
-      `
-      DELETE FROM users
-      WHERE id = $1
-      AND role = 'learner'
-      RETURNING id
-      `,
-      [req.params.id]
-    );
+      const result =
+        await pool.query(
+          `
+          DELETE FROM users
 
-    if (result.rows.length === 0) {
+          WHERE id = $1
+          AND role = 'learner'
 
-      return res.status(404).json({
-        success: false,
-        message: "Learner not found."
+          RETURNING id
+          `,
+          [req.params.id]
+        );
+
+
+      if (
+        result.rows.length === 0
+      ) {
+
+        return res.status(404).json({
+
+          success: false,
+
+          message:
+            "Learner not found."
+
+        });
+
+      }
+
+
+      res.json({
+
+        success: true,
+
+        message:
+          "Learner deleted successfully."
+
       });
+
+
+    } catch (error) {
+
+      console.error(
+        "Delete learner error:",
+        error
+      );
+
+      res.status(500).json({
+
+        success: false,
+
+        message:
+          "Unable to delete learner."
+
+      });
+
     }
 
-    res.json({
-      success: true,
-      message: "Learner deleted successfully."
-    });
-
-  } catch (error) {
-
-    console.error("Delete learner error:", error);
-
-    res.status(500).json({
-      success: false,
-      message: "Unable to delete learner."
-    });
   }
-});
+);
+
 
 // ===============================
 // START SERVER
 // ===============================
 
-app.listen(PORT, async () => {
+app.listen(
+  PORT,
+  async () => {
 
-  console.log(
-    `Server running on port ${PORT}`
-  );
-
-  try {
-
-    await setupDatabase();
-
-  } catch (error) {
-
-    console.error(
-      "Database setup failed:",
-      error
+    console.log(
+      `Server running on port ${PORT}`
     );
+
+
+    try {
+
+      await setupDatabase();
+
+    } catch (error) {
+
+      console.error(
+        "Database setup failed:",
+        error
+      );
+
+    }
+
   }
-});
+);
 ```
