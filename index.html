@@ -3,7 +3,8 @@
 <form id="lf"><label>Email</label><input name="email" type="email" required><label>Password</label><input name="pass" type="password" required><button class="btn" style="width:100%">Login</button></form>
 <form id="rf" hidden><label>Register as</label><select name="role" id="roleSel"><option value="learner">Learner</option><option value="lecturer">Lecturer</option></select><label>Full name</label><input name="name" required><label>Email</label><input name="email" type="email" required><label>Password</label><input name="pass" type="password" minlength="6" required><div id="codeBox" hidden><label>Lecturer access code</label><input name="code" autocomplete="off"></div><p class="m" id="regNote">Learner registrations require Lecturer/Admin approval.</p><button class="btn" id="regBtn" style="width:100%">Create learner account</button></form></div></div>
 <script src="app.js"></script><script>
-const u=session();if(u)location.href=u.role==='admin'||u.role==='lecturer'?'lecturer.html':'learner.html';
+let u=session();
+if(u){const t=+sessionStorage.getItem('rr')||0;if(Date.now()-t<6000){try{localStorage.clear();sessionStorage.clear()}catch(e){}u=null}else{try{sessionStorage.setItem('rr',Date.now())}catch(e){}location.href=u.role==='admin'||u.role==='lecturer'?'lecturer.html':'learner.html'}}
 function show(t){$('#lf').hidden=t!=='l';$('#rf').hidden=t!=='r';$$('.tabs button').forEach(b=>b.classList.toggle('on',b.dataset.t===t))}
 $$('.tabs button').forEach(b=>b.onclick=()=>show(b.dataset.t));if(location.search.includes('register'))show('r');
 function roleUI(){const lec=$('#roleSel').value==='lecturer';$('#codeBox').hidden=!lec;$('#rf').elements.code.required=lec;$('#regBtn').textContent=lec?'Create lecturer account':'Create learner account';$('#regNote').textContent=lec?'Lecturer registration requires the access code from the administrator.':'Learner registrations require Lecturer/Admin approval.'}
