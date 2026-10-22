@@ -1,14 +1,247 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>RISE COLLECTIVE Portal</title><link rel="stylesheet" href="style.css"></head><body>
-<div class="login"><div class="logo big"></div><h1>RISE COLLECTIVE</h1><p class="m">Assessment Portal</p><div class="card"><div class="tabs"><button class="on" data-t="l">Login</button><button data-t="r">Register</button></div>
-<form id="lf"><label>Email</label><input name="email" type="email" required><label>Password</label><input name="pass" type="password" required><button class="btn" style="width:100%">Login</button></form>
-<form id="rf" hidden><label>Register as</label><select name="role" id="roleSel"><option value="learner">Learner</option><option value="lecturer">Lecturer</option></select><label>Full name</label><input name="name" required><label>Email</label><input name="email" type="email" required><label>Password</label><input name="pass" type="password" minlength="6" required><div id="codeBox" hidden><label>Lecturer access code</label><input name="code" autocomplete="off"></div><p class="m" id="regNote">Learner registrations require Lecturer/Admin approval.</p><button class="btn" id="regBtn" style="width:100%">Create learner account</button></form></div></div>
-<script src="app.js"></script><script>
-let u=session();
-if(u){const t=+sessionStorage.getItem('rr')||0;if(Date.now()-t<6000){try{localStorage.clear();sessionStorage.clear()}catch(e){}u=null}else{try{sessionStorage.setItem('rr',Date.now())}catch(e){}location.href=u.role==='admin'||u.role==='lecturer'?'lecturer.html':'learner.html'}}
-function show(t){$('#lf').hidden=t!=='l';$('#rf').hidden=t!=='r';$$('.tabs button').forEach(b=>b.classList.toggle('on',b.dataset.t===t))}
-$$('.tabs button').forEach(b=>b.onclick=()=>show(b.dataset.t));if(location.search.includes('register'))show('r');
-function roleUI(){const lec=$('#roleSel').value==='lecturer';$('#codeBox').hidden=!lec;$('#rf').elements.code.required=lec;$('#regBtn').textContent=lec?'Create lecturer account':'Create learner account';$('#regNote').textContent=lec?'Lecturer registration requires the access code from the administrator.':'Learner registrations require Lecturer/Admin approval.'}
-$('#roleSel').onchange=roleUI;
-$('#lf').onsubmit=async e=>{e.preventDefault();const f=e.target.elements;try{const x=await api('/auth/login',{method:'POST',body:JSON.stringify({email:f.email.value,password:f.pass.value})});saveSession(x.user);location.href=x.user.role==='admin'||x.user.role==='lecturer'?'lecturer.html':'learner.html'}catch(x){alert(x.message)}};
-$('#rf').onsubmit=async e=>{e.preventDefault();const f=e.target.elements;try{const x=await api('/auth/register',{method:'POST',body:JSON.stringify({name:f.name.value,email:f.email.value,password:f.pass.value,role:f.role.value,code:f.code.value})});alert(x.status==='approved'?'Lecturer account created. You can log in now.':'Registration submitted. Wait for Lecturer/Admin approval before logging in.');e.target.reset();roleUI();show('l')}catch(x){alert(x.message)}};
-</script></body></html>
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RISE COLLECTIVE Portal</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+  <div class="login">
+    <div class="logo big"></div>
+
+    <h1>RISE COLLECTIVE</h1>
+    <p class="m">Assessment Portal</p>
+
+    <div class="card">
+      <div class="tabs">
+        <button type="button" class="on" data-t="l">Login</button>
+        <button type="button" data-t="r">Register</button>
+      </div>
+
+      <!-- LOGIN FORM -->
+      <form id="lf">
+        <label for="loginEmail">Email</label>
+        <input
+          id="loginEmail"
+          name="email"
+          type="email"
+          autocomplete="username"
+          required
+        >
+
+        <label for="loginPassword">Password</label>
+        <input
+          id="loginPassword"
+          name="pass"
+          type="password"
+          autocomplete="current-password"
+          required
+        >
+
+        <button class="btn" type="submit" style="width:100%">
+          Login
+        </button>
+      </form>
+
+      <!-- REGISTRATION FORM -->
+      <form id="rf" hidden>
+        <label for="roleSel">Register as</label>
+        <select name="role" id="roleSel">
+          <option value="learner">Learner</option>
+          <option value="lecturer">Lecturer</option>
+        </select>
+
+        <label for="registerName">Full name</label>
+        <input
+          id="registerName"
+          name="name"
+          type="text"
+          autocomplete="name"
+          required
+        >
+
+        <label for="registerEmail">Email</label>
+        <input
+          id="registerEmail"
+          name="email"
+          type="email"
+          autocomplete="email"
+          required
+        >
+
+        <label for="registerPassword">Password</label>
+        <input
+          id="registerPassword"
+          name="pass"
+          type="password"
+          minlength="6"
+          autocomplete="new-password"
+          required
+        >
+
+        <div id="codeBox" hidden>
+          <label for="lecturerCode">Lecturer access code</label>
+          <input
+            id="lecturerCode"
+            name="code"
+            type="password"
+            autocomplete="off"
+          >
+        </div>
+
+        <p class="m" id="regNote">
+          Learner registrations require Lecturer/Admin approval.
+        </p>
+
+        <button class="btn" id="regBtn" type="submit" style="width:100%">
+          Create learner account
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+
+  <script>
+    /*
+     * IMPORTANT:
+     * The automatic session redirect has been removed.
+     * Opening index.html will display the login page.
+     * Users are redirected to their dashboard only after
+     * a successful login response from the server.
+     */
+
+    function show(tab) {
+      $('#lf').hidden = tab !== 'l';
+      $('#rf').hidden = tab !== 'r';
+
+      $$('.tabs button').forEach(button => {
+        button.classList.toggle('on', button.dataset.t === tab);
+      });
+    }
+
+    $$('.tabs button').forEach(button => {
+      button.addEventListener('click', () => show(button.dataset.t));
+    });
+
+    if (location.search.includes('register')) {
+      show('r');
+    }
+
+    function roleUI() {
+      const lecturer = $('#roleSel').value === 'lecturer';
+
+      $('#codeBox').hidden = !lecturer;
+      $('#rf').elements.code.required = lecturer;
+
+      $('#regBtn').textContent = lecturer
+        ? 'Create lecturer account'
+        : 'Create learner account';
+
+      $('#regNote').textContent = lecturer
+        ? 'Lecturer registration requires the access code from the administrator.'
+        : 'Learner registrations require Lecturer/Admin approval.';
+    }
+
+    $('#roleSel').addEventListener('change', roleUI);
+
+    // LOGIN
+    $('#lf').addEventListener('submit', async event => {
+      event.preventDefault();
+
+      const form = event.target;
+      const fields = form.elements;
+      const button = form.querySelector('button[type="submit"]');
+
+      button.disabled = true;
+      button.textContent = 'Logging in...';
+
+      try {
+        const result = await api('/auth/login', {
+          method: 'POST',
+          body: JSON.stringify({
+            email: fields.email.value.trim(),
+            password: fields.pass.value
+          })
+        });
+
+        if (!result.user || !result.user.role) {
+          throw new Error('The server returned an invalid login response.');
+        }
+
+        // Save the session only after successful authentication.
+        saveSession(result.user);
+
+        // Route users according to the role returned by the server.
+        if (
+          result.user.role === 'admin' ||
+          result.user.role === 'lecturer'
+        ) {
+          location.href = 'lecturer.html';
+        } else if (result.user.role === 'learner') {
+          location.href = 'learner.html';
+        } else {
+          localStorage.removeItem('rise_session');
+          throw new Error('Your account has an unrecognised role.');
+        }
+      } catch (error) {
+        alert(error.message || 'Login failed. Please try again.');
+        button.disabled = false;
+        button.textContent = 'Login';
+      }
+    });
+
+    // REGISTRATION
+    $('#rf').addEventListener('submit', async event => {
+      event.preventDefault();
+
+      const form = event.target;
+      const fields = form.elements;
+      const button = $('#regBtn');
+
+      button.disabled = true;
+      button.textContent = 'Creating account...';
+
+      try {
+        const result = await api('/auth/register', {
+          method: 'POST',
+          body: JSON.stringify({
+            name: fields.name.value.trim(),
+            email: fields.email.value.trim(),
+            password: fields.pass.value,
+            role: fields.role.value,
+            code: fields.code.value
+          })
+        });
+
+        if (result.status === 'approved') {
+          alert('Lecturer account created. You can log in now.');
+        } else {
+          alert(
+            'Registration submitted. Wait for Lecturer/Admin approval before logging in.'
+          );
+        }
+
+        form.reset();
+        roleUI();
+        show('l');
+      } catch (error) {
+        alert(error.message || 'Registration failed. Please try again.');
+      } finally {
+        button.disabled = false;
+
+        const lecturer = $('#roleSel').value === 'lecturer';
+        button.textContent = lecturer
+          ? 'Create lecturer account'
+          : 'Create learner account';
+      }
+    });
+
+    // Set the correct registration controls when the page loads.
+    roleUI();
+  </script>
+</body>
+</html>
