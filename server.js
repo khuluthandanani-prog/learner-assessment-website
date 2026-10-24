@@ -25,7 +25,7 @@ async function init() {
   // Remove the variable afterwards, otherwise data is wiped on every restart.
   if (process.env.RESET_DATABASE === 'true') {
     console.log('RESET_DATABASE=true -> wiping all data');
-    await pool.query('DROP TABLE IF EXISTS rise_submissions, rise_assessments, rise_users CASCADE');
+    await pool.query('DROP TABLE IF EXISTS rise_resources, rise_submissions, rise_assessments, rise_users CASCADE');
   }
 
   await pool.query(`
@@ -61,6 +61,18 @@ async function init() {
       marked_at TIMESTAMPTZ,
       UNIQUE(assessment_id, user_id)
     );
+    CREATE TABLE IF NOT EXISTS rise_resources(
+      id TEXT PRIMARY KEY,
+      subject TEXT NOT NULL,
+      title TEXT NOT NULL,
+      description TEXT DEFAULT '',
+      type TEXT NOT NULL,
+      url TEXT,
+      file_name TEXT,
+      file_data TEXT,
+      created_by TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
   `);
 
   // Records who created each assessment (used to limit junior tutors to their own work)
@@ -95,7 +107,7 @@ async function admin(req, res, next) {
   }
 }
 
-// Approved admins, lecturers AND approved junior tutors (assessments and marking)
+// Approved admins, lecturers AND approved junior tutors (assessments, marking, posting notes)
 async function staff(req, res, next) {
   try {
     const x = await pool.query(
@@ -103,6 +115,21 @@ async function staff(req, res, next) {
       [req.headers['x-admin-id']]
     );
     if (!x.rowCount) return res.status(403).json({ error: 'Access denied' });
+    req.user = x.rows[0];
+    next();
+  } catch (e) {
+    next(e);
+  }
+}
+
+// Any approved user: learners, tutors, lecturers, admins (viewing notes and videos)
+async function anyUser(req, res, next) {
+  try {
+    const x = await pool.query(
+      "SELECT id,role FROM rise_users WHERE id=$1 AND status='approved'",
+      [req.headers['x-admin-id']]
+    );
+    if (!x.rowCount) return res.status(403).json({ error: 'Please log in again.' });
     req.user = x.rows[0];
     next();
   } catch (e) {
@@ -385,6 +412,79 @@ app.patch('/api/admin/tutors/:id', admin, async (req, res) => {
 app.delete('/api/admin/tutors/:id', admin, async (req, res) => {
   try {
     await pool.query("DELETE FROM rise_users WHERE id=$1 AND role='tutor'", [req.params.id]);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ---- Notes and online videos ----
+// List (no file contents, so the page stays fast). Everyone approved can view.
+app.get('/api/resources', anyUser, async (req, res) => {
+  try {
+    const r = await pool.query(`
+      SELECT r.id,r.subject,r.title,r.description AS "desc",r.type,r.url,
+             r.file_name AS "fileName",r.created_by AS "createdBy",u.name AS "by",r.created_at AS at
+      FROM rise_resources r LEFT JOIN rise_users u ON u.id=r.created_by
+      ORDER BY r.created_at DESC`);
+    res.json({ resources: r.rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Download one attached notes file
+app.get('/api/resources/:id/file', anyUser, async (req, res) => {
+  try {
+    const r = await pool.query('SELECT file_name,file_data FROM rise_resources WHERE id=$1', [req.params.id]);
+    if (!r.rowCount || !r.rows[0].file_data) return res.status(404).json({ error: 'File not found.' });
+    res.json({ name: r.rows[0].file_name, data: r.rows[0].file_data });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Post notes or a video link (admins, lecturers, approved junior tutors)
+app.post('/api/resources', staff, async (req, res) => {
+  try {
+    const { subject, title, desc, type, url, file } = req.body;
+    const sub = String(subject || '').trim().slice(0, 80);
+    const ttl = String(title || '').trim().slice(0, 200);
+    if (!sub || !ttl) return res.status(400).json({ error: 'Subject and title are required.' });
+    if (!['note', 'video'].includes(type)) return res.status(400).json({ error: 'Invalid type.' });
+
+    let link = null;
+    if (type === 'video') {
+      try {
+        const u = new URL(String(url || '').trim());
+        if (!['http:', 'https:'].includes(u.protocol)) throw new Error('bad');
+        link = u.href;
+      } catch (e) {
+        return res.status(400).json({ error: 'Enter a valid video link starting with http:// or https://' });
+      }
+    } else if (!file && !String(desc || '').trim()) {
+      return res.status(400).json({ error: 'Add a file or some notes text.' });
+    }
+
+    const x = id();
+    await pool.query(
+      'INSERT INTO rise_resources(id,subject,title,description,type,url,file_name,file_data,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+      [x, sub, ttl, String(desc || '').slice(0, 20000), type, link,
+       type === 'note' ? (file?.name || null) : null, type === 'note' ? (file?.data || null) : null, req.user.id]
+    );
+    res.json({ ok: true, id: x });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Tutors can delete only their own posts; admins and lecturers can delete any
+app.delete('/api/resources/:id', staff, async (req, res) => {
+  try {
+    const r = req.user.role === 'tutor'
+      ? await pool.query('DELETE FROM rise_resources WHERE id=$1 AND created_by=$2', [req.params.id, req.user.id])
+      : await pool.query('DELETE FROM rise_resources WHERE id=$1', [req.params.id]);
+    if (!r.rowCount) return res.status(403).json({ error: 'You can only delete your own posts.' });
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
