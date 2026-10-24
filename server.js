@@ -80,7 +80,7 @@ async function init() {
   }
 }
 
-// Approved admins and lecturers only (learner management, full access)
+// Approved admins and lecturers only (learner and tutor management, full access)
 async function admin(req, res, next) {
   try {
     const x = await pool.query(
@@ -95,7 +95,7 @@ async function admin(req, res, next) {
   }
 }
 
-// Approved admins, lecturers AND junior tutors (assessments and marking)
+// Approved admins, lecturers AND approved junior tutors (assessments and marking)
 async function staff(req, res, next) {
   try {
     const x = await pool.query(
@@ -119,9 +119,10 @@ app.get('/api/health', async (req, res) => {
   }
 });
 
-// Register. Learners are created as 'pending'.
-// Lecturers need role:'lecturer' + code matching LECTURER_CODE.
-// Junior tutors need role:'tutor' + code matching TUTOR_CODE.
+// Register.
+// Learners: pending until approved.
+// Lecturers: role:'lecturer' + code matching LECTURER_CODE, approved immediately.
+// Junior tutors: role:'tutor' + code matching TUTOR_CODE, then PENDING until an admin/lecturer approves.
 app.post('/api/auth/register', async (req, res) => {
   try {
     let { name, email, password, role, code } = req.body;
@@ -144,7 +145,7 @@ app.post('/api/auth/register', async (req, res) => {
       if (!process.env.TUTOR_CODE || code !== process.env.TUTOR_CODE)
         return res.status(403).json({ error: 'Invalid tutor registration code.' });
       newRole = 'tutor';
-      status = 'approved';
+      status = 'pending';
     }
 
     await pool.query(
@@ -319,7 +320,7 @@ app.patch('/api/submissions/:id', staff, async (req, res) => {
   }
 });
 
-// Learner management: admins and lecturers ONLY (tutors are refused by the admin check)
+// Learner management: admins and lecturers ONLY
 app.patch('/api/admin/users/:id', admin, async (req, res) => {
   try {
     if (!['pending', 'approved', 'blocked'].includes(req.body.status))
@@ -348,6 +349,42 @@ app.patch('/api/admin/users/:id/password', admin, async (req, res) => {
 app.delete('/api/admin/users/:id', admin, async (req, res) => {
   try {
     await pool.query("DELETE FROM rise_users WHERE id=$1 AND role='learner'", [req.params.id]);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ---- Junior tutor management (admins and lecturers only) ----
+app.get('/api/admin/tutors', admin, async (req, res) => {
+  try {
+    const r = await pool.query(`
+      SELECT u.id,u.name,u.email,u.status,u.last_login AS "lastLogin",
+        (SELECT COUNT(*) FROM rise_assessments a WHERE a.created_by=u.id)::int AS assessments,
+        (SELECT COUNT(*) FROM rise_submissions s JOIN rise_assessments a ON a.id=s.assessment_id
+          WHERE a.created_by=u.id AND s.mark IS NOT NULL)::int AS marked
+      FROM rise_users u WHERE u.role='tutor'
+      ORDER BY CASE u.status WHEN 'pending' THEN 0 WHEN 'approved' THEN 1 ELSE 2 END, u.name`);
+    res.json({ tutors: r.rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.patch('/api/admin/tutors/:id', admin, async (req, res) => {
+  try {
+    if (!['pending', 'approved', 'blocked'].includes(req.body.status))
+      return res.status(400).json({ error: 'Invalid status' });
+    await pool.query("UPDATE rise_users SET status=$1 WHERE id=$2 AND role='tutor'", [req.body.status, req.params.id]);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.delete('/api/admin/tutors/:id', admin, async (req, res) => {
+  try {
+    await pool.query("DELETE FROM rise_users WHERE id=$1 AND role='tutor'", [req.params.id]);
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
