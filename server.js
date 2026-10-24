@@ -63,6 +63,9 @@ async function init() {
     );
   `);
 
+  // Records who created each assessment (used to limit junior tutors to their own work)
+  await pool.query('ALTER TABLE rise_assessments ADD COLUMN IF NOT EXISTS created_by TEXT');
+
   // Seed the first admin/lecturer account from environment variables
   const email = (process.env.ADMIN_EMAIL || 'admin@rise.com').toLowerCase();
   const pass = process.env.ADMIN_PASSWORD || 'change-this-admin-password';
@@ -77,14 +80,30 @@ async function init() {
   }
 }
 
-// Allows approved admins and lecturers
+// Approved admins and lecturers only (learner management, full access)
 async function admin(req, res, next) {
   try {
     const x = await pool.query(
-      "SELECT id FROM rise_users WHERE id=$1 AND role IN ('admin','lecturer') AND status='approved'",
+      "SELECT id,role FROM rise_users WHERE id=$1 AND role IN ('admin','lecturer') AND status='approved'",
       [req.headers['x-admin-id']]
     );
     if (!x.rowCount) return res.status(403).json({ error: 'Admin access denied' });
+    req.user = x.rows[0];
+    next();
+  } catch (e) {
+    next(e);
+  }
+}
+
+// Approved admins, lecturers AND junior tutors (assessments and marking)
+async function staff(req, res, next) {
+  try {
+    const x = await pool.query(
+      "SELECT id,role FROM rise_users WHERE id=$1 AND role IN ('admin','lecturer','tutor') AND status='approved'",
+      [req.headers['x-admin-id']]
+    );
+    if (!x.rowCount) return res.status(403).json({ error: 'Access denied' });
+    req.user = x.rows[0];
     next();
   } catch (e) {
     next(e);
@@ -101,7 +120,8 @@ app.get('/api/health', async (req, res) => {
 });
 
 // Register. Learners are created as 'pending'.
-// Lecturers must send role:'lecturer' and a code matching the LECTURER_CODE env variable.
+// Lecturers need role:'lecturer' + code matching LECTURER_CODE.
+// Junior tutors need role:'tutor' + code matching TUTOR_CODE.
 app.post('/api/auth/register', async (req, res) => {
   try {
     let { name, email, password, role, code } = req.body;
@@ -120,6 +140,11 @@ app.post('/api/auth/register', async (req, res) => {
         return res.status(403).json({ error: 'Invalid lecturer registration code.' });
       newRole = 'lecturer';
       status = 'approved';
+    } else if (role === 'tutor') {
+      if (!process.env.TUTOR_CODE || code !== process.env.TUTOR_CODE)
+        return res.status(403).json({ error: 'Invalid tutor registration code.' });
+      newRole = 'tutor';
+      status = 'approved';
     }
 
     await pool.query(
@@ -132,8 +157,7 @@ app.post('/api/auth/register', async (req, res) => {
   }
 });
 
-// Login. On failure the response has { error } and NO user,
-// so the browser code must check for data.error before reading data.user.role
+// Login. On failure the response has { error } and NO user.
 app.post('/api/auth/login', async (req, res) => {
   try {
     const r = await pool.query('SELECT * FROM rise_users WHERE email=$1', [
@@ -158,13 +182,33 @@ app.post('/api/auth/login', async (req, res) => {
 
 const withFile = x => ({ ...x, file: x.file_name ? { name: x.file_name, data: x.file_data } : null });
 
-app.get('/api/admin/data', admin, async (req, res) => {
+// Admins/lecturers see everything. Tutors see only their own assessments,
+// the submissions to them, and only the learners who submitted to them.
+app.get('/api/admin/data', staff, async (req, res) => {
   try {
-    const [a, s, l] = await Promise.all([
-      pool.query('SELECT id,title,description AS desc,total,due,file_name,file_data FROM rise_assessments ORDER BY created_at DESC'),
-      pool.query('SELECT id,assessment_id AS aid,user_id AS uid,text,file_name,file_data,submitted_at AS at,mark,feedback FROM rise_submissions ORDER BY submitted_at DESC'),
-      pool.query("SELECT id,name,email,status,last_login AS \"lastLogin\" FROM rise_users WHERE role='learner' ORDER BY name")
-    ]);
+    const tutor = req.user.role === 'tutor';
+    const p = tutor ? [req.user.id] : [];
+
+    const aQ = pool.query(
+      'SELECT id,title,description AS desc,total,due,file_name,file_data FROM rise_assessments' +
+      (tutor ? ' WHERE created_by=$1' : '') + ' ORDER BY created_at DESC', p);
+
+    const sQ = pool.query(
+      'SELECT s.id,s.assessment_id AS aid,s.user_id AS uid,s.text,s.file_name,s.file_data,s.submitted_at AS at,s.mark,s.feedback FROM rise_submissions s' +
+      (tutor ? ' JOIN rise_assessments a ON a.id=s.assessment_id WHERE a.created_by=$1' : '') +
+      ' ORDER BY s.submitted_at DESC', p);
+
+    const lQ = tutor
+      ? pool.query(
+          `SELECT DISTINCT u.id,u.name,u.email,u.status,u.last_login AS "lastLogin"
+           FROM rise_users u
+           JOIN rise_submissions s ON s.user_id=u.id
+           JOIN rise_assessments a ON a.id=s.assessment_id
+           WHERE u.role='learner' AND a.created_by=$1
+           ORDER BY u.name`, p)
+      : pool.query("SELECT id,name,email,status,last_login AS \"lastLogin\" FROM rise_users WHERE role='learner' ORDER BY name");
+
+    const [a, s, l] = await Promise.all([aQ, sQ, lQ]);
     res.json({ assessments: a.rows.map(withFile), submissions: s.rows.map(withFile), learners: l.rows });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -184,7 +228,6 @@ app.get('/api/learner/data', async (req, res) => {
     ]);
     const now = new Date();
     res.json({
-      // each assessment carries closed:true once its deadline has passed
       assessments: a.rows.map(x => ({ ...withFile(x), closed: now > new Date(x.due) })),
       submissions: s.rows.map(withFile)
     });
@@ -193,12 +236,11 @@ app.get('/api/learner/data', async (req, res) => {
   }
 });
 
-app.post('/api/assessments', admin, async (req, res) => {
+app.post('/api/assessments', staff, async (req, res) => {
   try {
     const { title, desc, total, due, file } = req.body;
 
-    // Deadlines typed by the lecturer are South African time (UTC+2, no daylight saving).
-    // If the browser sent no time zone, add +02:00 so the time is stored exactly as typed.
+    // Deadlines typed are South African time (UTC+2). Add the offset if none was sent.
     let dueStr = String(due || '').trim().replace(' ', 'T');
     if (!/(Z|[+-]\d{2}:?\d{2})$/i.test(dueStr)) {
       if (/T\d{2}:\d{2}$/.test(dueStr)) dueStr += ':00';
@@ -209,8 +251,8 @@ app.post('/api/assessments', admin, async (req, res) => {
 
     const x = id();
     await pool.query(
-      'INSERT INTO rise_assessments(id,title,description,total,due,file_name,file_data) VALUES($1,$2,$3,$4,$5,$6,$7)',
-      [x, title, desc || '', +total, dueStr, file?.name || null, file?.data || null]
+      'INSERT INTO rise_assessments(id,title,description,total,due,file_name,file_data,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',
+      [x, title, desc || '', +total, dueStr, file?.name || null, file?.data || null, req.user.id]
     );
     res.json({ ok: true, id: x });
   } catch (e) {
@@ -218,9 +260,13 @@ app.post('/api/assessments', admin, async (req, res) => {
   }
 });
 
-app.delete('/api/assessments/:id', admin, async (req, res) => {
+// Tutors can delete only their own assessments
+app.delete('/api/assessments/:id', staff, async (req, res) => {
   try {
-    await pool.query('DELETE FROM rise_assessments WHERE id=$1', [req.params.id]);
+    const r = req.user.role === 'tutor'
+      ? await pool.query('DELETE FROM rise_assessments WHERE id=$1 AND created_by=$2', [req.params.id, req.user.id])
+      : await pool.query('DELETE FROM rise_assessments WHERE id=$1', [req.params.id]);
+    if (!r.rowCount) return res.status(403).json({ error: 'You can only delete your own assessments.' });
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -255,18 +301,25 @@ app.post('/api/submissions', async (req, res) => {
   }
 });
 
-app.patch('/api/submissions/:id', admin, async (req, res) => {
+// Marking. Tutors can mark only submissions to their own assessments.
+app.patch('/api/submissions/:id', staff, async (req, res) => {
   try {
-    await pool.query(
-      'UPDATE rise_submissions SET mark=$1,feedback=$2,marked_at=NOW() WHERE id=$3',
-      [+req.body.mark, req.body.feedback || '', req.params.id]
-    );
+    const r = req.user.role === 'tutor'
+      ? await pool.query(
+          `UPDATE rise_submissions SET mark=$1,feedback=$2,marked_at=NOW()
+           WHERE id=$3 AND assessment_id IN (SELECT id FROM rise_assessments WHERE created_by=$4)`,
+          [+req.body.mark, req.body.feedback || '', req.params.id, req.user.id])
+      : await pool.query(
+          'UPDATE rise_submissions SET mark=$1,feedback=$2,marked_at=NOW() WHERE id=$3',
+          [+req.body.mark, req.body.feedback || '', req.params.id]);
+    if (!r.rowCount) return res.status(403).json({ error: 'You can only mark submissions to your own assessments.' });
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
+// Learner management: admins and lecturers ONLY (tutors are refused by the admin check)
 app.patch('/api/admin/users/:id', admin, async (req, res) => {
   try {
     if (!['pending', 'approved', 'blocked'].includes(req.body.status))
