@@ -1,0 +1,42 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Junior Tutors | RISE COLLECTIVE</title><link rel="stylesheet" href="style.css"></head><body>
+<div class="top"><div class="brand"><div class="logo"></div><div>RISE COLLECTIVE<small>JUNIOR TUTORS</small></div></div><div><a class="btn sm" href="lecturer.html">← Back</a> <button class="btn sm ghost" onclick="logout()">Logout</button></div></div>
+<main><div class="card"><div class="row"><h3>Registered junior tutors</h3><span class="m" id="count"></span></div>
+<div class="table"><table><thead><tr><th>Name</th><th>Email</th><th>Status</th><th>Assessments</th><th>Marked</th><th>Last login</th><th>Actions</th></tr></thead><tbody id="tb"></tbody></table></div></div></main>
+<script src="app.js"></script><script>
+const me=session();
+if(!me||(me.role!=='admin'&&me.role!=='lecturer')){location.href=me?'lecturer.html':'index.html'}
+const tb=$('#tb');
+const cls={approved:'ok',pending:'warn',blocked:'bad'};
+function buttons(t){
+  const id=esc(t.id);
+  let h='';
+  if(t.status==='pending')h+=`<button class="btn sm" data-a="approved" data-id="${id}">Approve</button> `;
+  if(t.status==='blocked')h+=`<button class="btn sm" data-a="approved" data-id="${id}">Unblock</button> `;
+  if(t.status!=='blocked')h+=`<button class="btn sm ghost" data-a="blocked" data-id="${id}">Block</button> `;
+  h+=`<button class="btn sm ghost" data-a="del" data-id="${id}">Delete</button>`;
+  return h;
+}
+async function load(){
+  try{
+    const d=await api('/admin/tutors');
+    const pend=d.tutors.filter(t=>t.status==='pending').length;
+    $('#count').textContent=d.tutors.length+' junior tutor(s)'+(pend?' · '+pend+' awaiting approval':'');
+    tb.innerHTML=d.tutors.length?d.tutors.map(t=>`<tr><td>${esc(t.name)}</td><td>${esc(t.email)}</td><td><span class="tag ${cls[t.status]||''}">${esc(t.status)}</span></td><td>${t.assessments}</td><td>${t.marked}</td><td>${fmt(t.lastLogin)}</td><td>${buttons(t)}</td></tr>`).join(''):'<tr><td colspan="7">No junior tutors registered yet.</td></tr>';
+  }catch(e){alert(e.message)}
+}
+tb.onclick=async e=>{
+  const b=e.target.closest('button');if(!b)return;
+  const a=b.dataset.a,id=b.dataset.id;
+  try{
+    if(a==='del'){
+      if(!confirm('Delete this junior tutor? Their assessments stay, but only admins and lecturers will be able to see them.'))return;
+      await api('/admin/tutors/'+id,{method:'DELETE'});
+    }else{
+      if(a==='blocked'&&!confirm('Block this junior tutor? They will not be able to log in.'))return;
+      await api('/admin/tutors/'+id,{method:'PATCH',body:JSON.stringify({status:a})});
+    }
+    load();
+  }catch(x){alert(x.message)}
+};
+load();
+</script></body></html>
