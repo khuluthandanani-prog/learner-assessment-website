@@ -2,9 +2,11 @@ const API='/api';
 const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)];
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const fmt=d=>d?new Date(d).toLocaleString('en-ZA',{dateStyle:'medium',timeStyle:'short'}):'—';
-// Logo: full logo on the login page, round emblem in the page headers
-const LOGO_FULL='<img src="logo.jpg" alt="RISE COLLECTIVE" style="display:block;width:240px;max-width:85%;height:auto;margin:0 auto;border-radius:10px">';
-const LOGO_ICON='<img src="logo-icon.png" alt="RISE COLLECTIVE" style="display:block;width:44px;height:44px;border-radius:50%;background:#fff;padding:2px;object-fit:cover">';
+// Logo: full logo on the login page, round brand symbol (cropped from the same image) in the page headers.
+// If logo.jpg cannot load, the old drawn logo is shown instead.
+const LOGO_OLD='<svg viewBox="0 0 64 64"><rect x="24" y="2" width="16" height="14" rx="3" fill="#c9a227"/><rect x="24" y="48" width="16" height="14" rx="3" fill="#c9a227"/><circle cx="32" cy="32" r="18" fill="#0f1b3d" stroke="#c9a227" stroke-width="3"/><path d="M32 32V21M32 32l8 4" stroke="#fff" stroke-width="2.5" stroke-linecap="round" fill="none"/><circle cx="32" cy="32" r="2" fill="#c9a227"/></svg>';
+const LOGO_FULL='<img src="logo.jpg?v=2" alt="RISE COLLECTIVE" onerror="this.outerHTML=LOGO_OLD" style="display:block;width:240px;max-width:85%;height:auto;margin:0 auto;border-radius:10px">';
+const LOGO_ICON='<svg viewBox="185 40 270 270" xmlns="http://www.w3.org/2000/svg" style="display:block;width:44px;height:44px;border-radius:50%;background:#fff"><image href="logo.jpg?v=2" x="0" y="0" width="640" height="640"/></svg>';
 $$('.logo').forEach(e=>{
   if(e.classList.contains('big')){
     e.innerHTML=LOGO_FULL;
