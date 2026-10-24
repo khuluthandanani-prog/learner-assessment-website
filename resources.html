@@ -1,0 +1,112 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Notes &amp; Videos | RISE COLLECTIVE</title><link rel="stylesheet" href="style.css"></head><body>
+<div class="top"><div class="brand"><div class="logo"></div><div>RISE COLLECTIVE<small>NOTES &amp; VIDEOS</small></div></div><div><a class="btn sm" id="back" href="index.html">← Back</a> <button class="btn sm ghost" onclick="logout()">Logout</button></div></div>
+<main>
+<div class="card" id="postCard" hidden>
+<h3>Post notes or a video</h3>
+<form id="pf">
+<label>Subject</label><input name="subject" list="subjList" required placeholder="e.g. Mathematics">
+<datalist id="subjList"></datalist>
+<label>Type</label><select name="type" id="typeSel"><option value="note">Notes (file and/or text)</option><option value="video">Online video (link)</option></select>
+<label>Title</label><input name="title" required>
+<label>Description / notes text</label><textarea name="desc"></textarea>
+<div id="urlBox" hidden><label>Video link (YouTube, Vimeo or other)</label><input name="url" type="url" placeholder="https://..."></div>
+<div id="fileBox"><label>Attach file (optional, max 1.5MB)</label><input name="file" type="file"></div>
+<button class="btn">Post</button>
+</form></div>
+<div class="card">
+<div class="row"><h3>Subjects</h3><span class="m" id="count"></span></div>
+<div class="row" style="align-items:flex-end">
+<div style="flex:1;min-width:150px"><label>Subject</label><select id="fs"></select></div>
+<div style="flex:1;min-width:150px"><label>Type</label><select id="ft"><option value="">All</option><option value="note">Notes</option><option value="video">Videos</option></select></div>
+</div></div>
+<div id="list"></div>
+</main>
+<script src="app.js"></script><script>
+const me=session();
+if(!me){location.href='index.html'}else{
+const staff=['admin','lecturer','tutor'].includes(me.role);
+$('#back').href=staff?'lecturer.html':'learner.html';
+if(staff)$('#postCard').hidden=false;
+let items=[];
+
+function typeUI(){const v=$('#typeSel').value==='video';$('#urlBox').hidden=!v;$('#fileBox').hidden=v;$('#pf').elements.url.required=v}
+$('#typeSel').onchange=typeUI;typeUI();
+
+const yt=i=>/^[\w-]{6,20}$/.test(i||'')?'https://www.youtube.com/embed/'+i:null;
+function toEmbed(u){try{
+  const x=new URL(u),h=x.hostname.replace(/^www\./,'');let m;
+  if(h==='youtu.be')return yt(x.pathname.slice(1));
+  if(h==='youtube.com'||h==='m.youtube.com'){
+    if(x.pathname==='/watch')return yt(x.searchParams.get('v'));
+    if((m=x.pathname.match(/^\/(shorts|embed)\/([\w-]+)/)))return yt(m[2]);
+  }
+  if(h==='vimeo.com'&&(m=x.pathname.match(/^\/(\d+)/)))return 'https://player.vimeo.com/video/'+m[1];
+}catch(e){}return null}
+
+const canDelete=r=>me.role==='admin'||me.role==='lecturer'||r.createdBy===me.id;
+
+function render(){
+  const s=$('#fs').value,t=$('#ft').value;
+  const rows=items.filter(r=>(!s||r.subject===s)&&(!t||r.type===t));
+  $('#count').textContent=rows.length+' item(s)';
+  $('#list').innerHTML=rows.length?rows.map(r=>{
+    const sid=esc(r.id);
+    let b='';
+    if(r.type==='video'){
+      b+=toEmbed(r.url)?`<button class="btn sm" data-a="watch" data-id="${sid}">▶ Watch</button> `:'';
+      b+=`<a class="btn sm ghost" href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">Open link ↗</a> `;
+    }else if(r.fileName){
+      b+=`<button class="btn sm" data-a="dl" data-id="${sid}">⬇ ${esc(r.fileName)}</button> `;
+    }
+    if(canDelete(r))b+=`<button class="btn sm ghost" data-a="del" data-id="${sid}">Delete</button>`;
+    return `<div class="card"><div class="row"><h3>${esc(r.title)}</h3><div><span class="tag">${esc(r.subject)}</span> <span class="tag ${r.type==='video'?'warn':'ok'}">${r.type==='video'?'Video':'Notes'}</span></div></div>`+
+      (r.desc?`<p style="white-space:pre-wrap">${esc(r.desc)}</p>`:'')+
+      `<small>Posted by ${esc(r.by||'(removed user)')} · ${fmt(r.at)}</small><div style="margin-top:8px">${b}</div><div id="v-${sid}"></div></div>`;
+  }).join(''):'<div class="card"><p class="m">Nothing posted yet.</p></div>';
+}
+
+async function load(){
+  try{
+    const d=await api('/resources');items=d.resources;
+    const subs=[...new Set(items.map(r=>r.subject))].sort((a,b)=>a.localeCompare(b));
+    const cur=$('#fs').value;
+    $('#fs').innerHTML='<option value="">All subjects</option>'+subs.map(x=>`<option value="${esc(x)}">${esc(x)}</option>`).join('');
+    if(subs.includes(cur))$('#fs').value=cur;
+    $('#subjList').innerHTML=subs.map(x=>`<option value="${esc(x)}">`).join('');
+    render();
+  }catch(e){alert(e.message)}
+}
+$('#fs').onchange=render;$('#ft').onchange=render;
+
+$('#list').onclick=async e=>{
+  const b=e.target.closest('button');if(!b)return;
+  const a=b.dataset.a,rid=b.dataset.id;
+  try{
+    if(a==='dl'){
+      const d=await api('/resources/'+rid+'/file');
+      const l=document.createElement('a');l.href=d.data;l.download=d.name||'notes';document.body.appendChild(l);l.click();l.remove();
+    }else if(a==='watch'){
+      const box=document.getElementById('v-'+rid);
+      if(box.firstChild){box.innerHTML='';return}
+      const r=items.find(x=>x.id===rid),src=r&&toEmbed(r.url);if(!src)return;
+      const f=document.createElement('iframe');f.src=src;f.allowFullscreen=true;f.setAttribute('allow','accelerometer; autoplay; encrypted-media; picture-in-picture; fullscreen');
+      f.style.cssText='width:100%;aspect-ratio:16/9;border:0;border-radius:8px;margin-top:10px';
+      box.appendChild(f);
+    }else if(a==='del'){
+      if(!confirm('Delete this post?'))return;
+      await api('/resources/'+rid,{method:'DELETE'});load();
+    }
+  }catch(x){alert(x.message)}
+};
+
+$('#pf').onsubmit=async e=>{
+  e.preventDefault();const f=e.target.elements;
+  try{
+    const file=await readFile(f.file.files[0]);
+    await api('/resources',{method:'POST',body:JSON.stringify({subject:f.subject.value,type:f.type.value,title:f.title.value,desc:f.desc.value,url:f.url.value,file})});
+    e.target.reset();typeUI();alert('Posted.');load();
+  }catch(x){alert(x.message||x)}
+};
+load();
+}
+</script></body></html>
