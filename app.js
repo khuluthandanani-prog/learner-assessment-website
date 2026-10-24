@@ -13,4 +13,6 @@ const readFile=f=>new Promise((res,rej)=>{if(!f)return res(null);if(f.size>1.5e6
 const fileLink=f=>f?`<a class="btn sm" href="${f.data}" download="${esc(f.name)}">⬇ ${esc(f.name)}</a>`:'';
 // Junior tutors: hide the "Learners" tab (the server also refuses learner management)
 function hideTutorTabs(){const u=session();if(!u||u.role!=='tutor')return;$$('button').forEach(b=>{const t=b.textContent.trim();if(t.length<25&&/learners/i.test(t))b.style.display='none'})}
-document.addEventListener('DOMContentLoaded',hideTutorTabs);window.addEventListener('load',hideTutorTabs);
+// Admins and lecturers: shortcut to the registered junior tutors page
+function addTutorLink(){const u=session();if(!u||(u.role!=='admin'&&u.role!=='lecturer')||!/lecturer\.html/.test(location.pathname)||$('#tutorsLink'))return;const a=document.createElement('a');a.id='tutorsLink';a.href='tutors.html';a.className='btn';a.textContent='👥 Junior Tutors';a.style.cssText='position:fixed;right:14px;bottom:14px;box-shadow:0 2px 8px #0004;z-index:50';document.body.appendChild(a)}
+document.addEventListener('DOMContentLoaded',()=>{hideTutorTabs();addTutorLink()});window.addEventListener('load',()=>{hideTutorTabs();addTutorLink()});
