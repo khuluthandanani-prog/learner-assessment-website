@@ -2,18 +2,9 @@ const API='/api';
 const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)];
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const fmt=d=>d?new Date(d).toLocaleString('en-ZA',{dateStyle:'medium',timeStyle:'short'}):'—';
-// Logo: full logo on the login page, round brand symbol (cropped from the same image) in the page headers.
-// If logo.jpg cannot load, the old drawn logo is shown instead.
-const LOGO_OLD='<svg viewBox="0 0 64 64"><rect x="24" y="2" width="16" height="14" rx="3" fill="#c9a227"/><rect x="24" y="48" width="16" height="14" rx="3" fill="#c9a227"/><circle cx="32" cy="32" r="18" fill="#0f1b3d" stroke="#c9a227" stroke-width="3"/><path d="M32 32V21M32 32l8 4" stroke="#fff" stroke-width="2.5" stroke-linecap="round" fill="none"/><circle cx="32" cy="32" r="2" fill="#c9a227"/></svg>';
-const LOGO_FULL='<img src="logo.jpg?v=2" alt="RISE COLLECTIVE" onerror="this.outerHTML=LOGO_OLD" style="display:block;width:240px;max-width:85%;height:auto;margin:0 auto;border-radius:10px">';
-const LOGO_ICON='<svg viewBox="185 40 270 270" xmlns="http://www.w3.org/2000/svg" style="display:block;width:44px;height:44px;border-radius:50%;background:#fff"><image href="logo.jpg?v=2" x="0" y="0" width="640" height="640"/></svg>';
-$$('.logo').forEach(e=>{
-  if(e.classList.contains('big')){
-    e.innerHTML=LOGO_FULL;
-    // the full logo already contains the RISE COLLECTIVE name, so hide the duplicate heading
-    const n=e.nextElementSibling;if(n&&n.tagName==='H1')n.style.display='none';
-  }else e.innerHTML=LOGO_ICON;
-});
+// RISE COLLECTIVE brand symbol: ring, gold arc, gold tick marks and the figure
+const LOGO='<svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="31.5" fill="#fff"/><circle cx="32" cy="32" r="26" fill="#fff" stroke="#0f1b3d" stroke-width="3"/><path d="M32 6A26 26 0 0 1 56.4 40.9" fill="none" stroke="#c9a227" stroke-width="3.6" stroke-linecap="round"/><path d="M32 8V15M16.6 13.6L21.1 19M47.4 13.6L42.9 19" stroke="#c9a227" stroke-width="2.4" stroke-linecap="round" fill="none"/><circle cx="32" cy="27" r="4.2" fill="#0f1b3d"/><path d="M32 31.2V43.8M26.2 40.9L32 37.1L37.8 40.9M27.3 48.7L32 43.8L36.7 48.7" stroke="#0f1b3d" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>';
+$$('.logo').forEach(e=>e.innerHTML=LOGO);
 const session=()=>{try{return JSON.parse(localStorage.getItem('rise_session'))}catch(e){return null}};
 const saveSession=x=>localStorage.setItem('rise_session',JSON.stringify(x));
 const logout=()=>{localStorage.removeItem('rise_session');location.href='index.html'};
