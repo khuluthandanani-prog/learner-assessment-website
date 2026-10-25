@@ -18,6 +18,11 @@ app.use(express.static(__dirname));
 
 const id = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
+// Day pass settings (change them in Render > Environment, no code change needed)
+const PASS_PRICE = Number(process.env.PASS_PRICE) > 0 ? Number(process.env.PASS_PRICE) : 10;   // rand
+const PASS_HOURS = parseInt(process.env.PASS_HOURS, 10) > 0 ? parseInt(process.env.PASS_HOURS, 10) : 24;
+const PAY_INSTRUCTIONS = process.env.PAY_INSTRUCTIONS || 'Ask your lecturer for the payment details.';
+
 async function init() {
   if (!process.env.DATABASE_URL) throw Error('DATABASE_URL is not configured');
 
@@ -25,7 +30,7 @@ async function init() {
   // Remove the variable afterwards, otherwise data is wiped on every restart.
   if (process.env.RESET_DATABASE === 'true') {
     console.log('RESET_DATABASE=true -> wiping all data');
-    await pool.query('DROP TABLE IF EXISTS rise_resources, rise_submissions, rise_assessments, rise_users CASCADE');
+    await pool.query('DROP TABLE IF EXISTS rise_passes, rise_resources, rise_submissions, rise_assessments, rise_users CASCADE');
   }
 
   await pool.query(`
@@ -73,6 +78,16 @@ async function init() {
       created_by TEXT,
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
+    CREATE TABLE IF NOT EXISTS rise_passes(
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES rise_users(id) ON DELETE CASCADE,
+      reference TEXT NOT NULL,
+      amount NUMERIC(8,2) NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      requested_at TIMESTAMPTZ DEFAULT NOW(),
+      activated_at TIMESTAMPTZ,
+      expires_at TIMESTAMPTZ
+    );
   `);
 
   // Records who created each assessment (used to limit junior tutors to their own work)
@@ -92,7 +107,7 @@ async function init() {
   }
 }
 
-// Approved admins and lecturers only (learner and tutor management, full access)
+// Approved admins and lecturers only (learner, tutor and payment management)
 async function admin(req, res, next) {
   try {
     const x = await pool.query(
@@ -122,7 +137,7 @@ async function staff(req, res, next) {
   }
 }
 
-// Any approved user: learners, tutors, lecturers, admins (viewing notes and videos)
+// Any approved user: learners, tutors, lecturers, admins
 async function anyUser(req, res, next) {
   try {
     const x = await pool.query(
@@ -136,6 +151,8 @@ async function anyUser(req, res, next) {
     next(e);
   }
 }
+
+const isStaffRole = r => ['admin', 'lecturer', 'tutor'].includes(r);
 
 app.get('/api/health', async (req, res) => {
   try {
@@ -419,12 +436,12 @@ app.delete('/api/admin/tutors/:id', admin, async (req, res) => {
 });
 
 // ---- Notes and online videos ----
-// List (no file contents, so the page stays fast). Everyone approved can view.
+// List (no file contents, and NO video links for learners: links are only given out by /video below).
 app.get('/api/resources', anyUser, async (req, res) => {
   try {
     const r = await pool.query(`
-      SELECT r.id,r.subject,r.title,r.description AS "desc",r.type,r.url,
-             r.file_name AS "fileName",r.created_by AS "createdBy",u.name AS "by",r.created_at AS at
+      SELECT r.id,r.subject,r.title,r.description AS "desc",r.type,r.file_name AS "fileName",
+             r.created_by AS "createdBy",u.name AS "by",r.created_at AS at
       FROM rise_resources r LEFT JOIN rise_users u ON u.id=r.created_by
       ORDER BY r.created_at DESC`);
     res.json({ resources: r.rows });
@@ -433,12 +450,32 @@ app.get('/api/resources', anyUser, async (req, res) => {
   }
 });
 
-// Download one attached notes file
+// Download one attached notes file (notes stay free)
 app.get('/api/resources/:id/file', anyUser, async (req, res) => {
   try {
     const r = await pool.query('SELECT file_name,file_data FROM rise_resources WHERE id=$1', [req.params.id]);
     if (!r.rowCount || !r.rows[0].file_data) return res.status(404).json({ error: 'File not found.' });
     res.json({ name: r.rows[0].file_name, data: r.rows[0].file_data });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Video link: staff always; learners ONLY while they have an active day pass
+app.get('/api/resources/:id/video', anyUser, async (req, res) => {
+  try {
+    const r = await pool.query("SELECT url FROM rise_resources WHERE id=$1 AND type='video'", [req.params.id]);
+    if (!r.rowCount) return res.status(404).json({ error: 'Video not found.' });
+
+    if (!isStaffRole(req.user.role)) {
+      const p = await pool.query(
+        "SELECT 1 FROM rise_passes WHERE user_id=$1 AND status='active' AND expires_at>NOW()",
+        [req.user.id]
+      );
+      if (!p.rowCount)
+        return res.status(403).json({ error: 'Day pass required. Get a day pass to watch videos.' });
+    }
+    res.json({ url: r.rows[0].url });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -485,6 +522,95 @@ app.delete('/api/resources/:id', staff, async (req, res) => {
       ? await pool.query('DELETE FROM rise_resources WHERE id=$1 AND created_by=$2', [req.params.id, req.user.id])
       : await pool.query('DELETE FROM rise_resources WHERE id=$1', [req.params.id]);
     if (!r.rowCount) return res.status(403).json({ error: 'You can only delete your own posts.' });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ---- Day passes for videos ----
+// Pass status for the logged-in learner
+app.get('/api/pass/me', anyUser, async (req, res) => {
+  try {
+    if (isStaffRole(req.user.role)) return res.json({ staff: true });
+    const act = await pool.query(
+      "SELECT expires_at FROM rise_passes WHERE user_id=$1 AND status='active' AND expires_at>NOW() ORDER BY expires_at DESC LIMIT 1",
+      [req.user.id]
+    );
+    const pen = await pool.query(
+      "SELECT reference FROM rise_passes WHERE user_id=$1 AND status='pending' ORDER BY requested_at DESC LIMIT 1",
+      [req.user.id]
+    );
+    res.json({
+      active: !!act.rowCount,
+      expiresAt: act.rowCount ? act.rows[0].expires_at : null,
+      pending: pen.rowCount ? { reference: pen.rows[0].reference } : null,
+      price: PASS_PRICE,
+      hours: PASS_HOURS,
+      instructions: PAY_INSTRUCTIONS
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// A learner asks for a day pass. It starts only after an admin/lecturer confirms the payment.
+app.post('/api/pass/request', anyUser, async (req, res) => {
+  try {
+    if (isStaffRole(req.user.role))
+      return res.status(400).json({ error: 'Staff do not need a pass.' });
+
+    const act = await pool.query(
+      "SELECT 1 FROM rise_passes WHERE user_id=$1 AND status='active' AND expires_at>NOW()",
+      [req.user.id]
+    );
+    if (act.rowCount) return res.status(400).json({ error: 'You already have an active day pass.' });
+
+    const pen = await pool.query("SELECT reference FROM rise_passes WHERE user_id=$1 AND status='pending'", [req.user.id]);
+    if (pen.rowCount) return res.json({ ok: true, reference: pen.rows[0].reference });
+
+    const reference = 'RISE-' + Math.random().toString(36).slice(2, 8).toUpperCase();
+    await pool.query(
+      'INSERT INTO rise_passes(id,user_id,reference,amount) VALUES($1,$2,$3,$4)',
+      [id(), req.user.id, reference, PASS_PRICE]
+    );
+    res.json({ ok: true, reference });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Admins and lecturers see the requests and confirm or reject them
+app.get('/api/admin/passes', admin, async (req, res) => {
+  try {
+    const r = await pool.query(`
+      SELECT p.id,p.reference,p.status,p.amount,p.requested_at AS "requestedAt",p.expires_at AS "expiresAt",u.name,u.email
+      FROM rise_passes p JOIN rise_users u ON u.id=p.user_id
+      WHERE p.status='pending' OR (p.status='active' AND p.expires_at>NOW()) OR p.requested_at>NOW()-INTERVAL '7 days'
+      ORDER BY CASE p.status WHEN 'pending' THEN 0 WHEN 'active' THEN 1 ELSE 2 END, p.requested_at DESC
+      LIMIT 200`);
+    res.json({ passes: r.rows, price: PASS_PRICE, hours: PASS_HOURS });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.patch('/api/admin/passes/:id', admin, async (req, res) => {
+  try {
+    const a = req.body.action;
+    let r;
+    if (a === 'confirm') {
+      r = await pool.query(
+        "UPDATE rise_passes SET status='active',activated_at=NOW(),expires_at=NOW()+($2::int*INTERVAL '1 hour') WHERE id=$1 AND status='pending'",
+        [req.params.id, PASS_HOURS]);
+    } else if (a === 'reject') {
+      r = await pool.query("UPDATE rise_passes SET status='rejected' WHERE id=$1 AND status='pending'", [req.params.id]);
+    } else if (a === 'revoke') {
+      r = await pool.query("UPDATE rise_passes SET status='revoked',expires_at=NOW() WHERE id=$1 AND status='active'", [req.params.id]);
+    } else {
+      return res.status(400).json({ error: 'Invalid action' });
+    }
+    if (!r.rowCount) return res.status(409).json({ error: 'That request has already been handled.' });
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
