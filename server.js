@@ -22,7 +22,14 @@ const id = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8
 // Day pass settings (change them in Render > Environment, no code change needed)
 const PASS_PRICE = Number(process.env.PASS_PRICE) > 0 ? Number(process.env.PASS_PRICE) : 10;   // rand
 const PASS_HOURS = parseInt(process.env.PASS_HOURS, 10) > 0 ? parseInt(process.env.PASS_HOURS, 10) : 24;
-const PAY_INSTRUCTIONS = process.env.PAY_INSTRUCTIONS || 'Ask your lecturer for the payment details.';
+const PAYENV = process.env;
+const PAY_INSTRUCTIONS = PAYENV.PAY_INSTRUCTIONS || [
+  PAYENV['POS-NAME'] && 'Account name: ' + PAYENV['POS-NAME'],
+  PAYENV['BANK'] && 'Bank: ' + PAYENV['BANK'],
+  PAYENV['ACC-NUMBR'] && 'Account number: ' + PAYENV['ACC-NUMBR'],
+  PAYENV['BRANCH-CODE'] && 'Branch code: ' + PAYENV['BRANCH-CODE'],
+  PAYENV['REF-TO-USE'] && 'Reference: ' + PAYENV['REF-TO-USE']
+].filter(Boolean).join('\n') || 'Ask your lecturer for the payment details.';
 // Sharing report: a learner is flagged when, within one pass period, their videos were opened from
 // this many different internet addresses or different devices/browsers (or more)
 const SHARE_MAX_IPS = parseInt(process.env.SHARE_MAX_IPS, 10) > 0 ? parseInt(process.env.SHARE_MAX_IPS, 10) : 3;
