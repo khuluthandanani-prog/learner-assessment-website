@@ -16,7 +16,9 @@ const fileLink=f=>f?`<a class="btn sm" href="${f.data}" download="${esc(f.name)}
 function hideTutorTabs(){const u=session();if(!u||u.role!=='tutor')return;$$('button').forEach(b=>{const t=b.textContent.trim();if(t.length<25&&/learners/i.test(t))b.style.display='none'})}
 // Admins and lecturers: shortcut to the registered junior tutors page
 function addTutorLink(){const u=session();if(!u||(u.role!=='admin'&&u.role!=='lecturer')||!/lecturer\.html/.test(location.pathname)||$('#tutorsLink'))return;const a=document.createElement('a');a.id='tutorsLink';a.href='tutors.html';a.className='btn';a.textContent='👥 Junior Tutors';a.style.cssText='position:fixed;right:14px;bottom:14px;box-shadow:0 2px 8px #0004;z-index:50';document.body.appendChild(a)}
+// Admins and lecturers: shortcut to the video day pass requests
+function addPassLink(){const u=session();if(!u||(u.role!=='admin'&&u.role!=='lecturer')||!/lecturer\.html/.test(location.pathname)||$('#passLink'))return;const a=document.createElement('a');a.id='passLink';a.href='passes.html';a.className='btn';a.textContent='💳 Day Passes';a.style.cssText='position:fixed;right:14px;bottom:62px;box-shadow:0 2px 8px #0004;z-index:50';document.body.appendChild(a)}
 // Everyone logged in: shortcut to the notes and videos page
 function addResLink(){const u=session();if(!u||!/(lecturer|learner)\.html/.test(location.pathname)||$('#resLink'))return;const a=document.createElement('a');a.id='resLink';a.href='resources.html';a.className='btn';a.textContent='📚 Notes & Videos';a.style.cssText='position:fixed;left:14px;bottom:14px;box-shadow:0 2px 8px #0004;z-index:50';document.body.appendChild(a)}
-function addLinks(){hideTutorTabs();addTutorLink();addResLink()}
+function addLinks(){hideTutorTabs();addTutorLink();addPassLink();addResLink()}
 document.addEventListener('DOMContentLoaded',addLinks);window.addEventListener('load',addLinks);
