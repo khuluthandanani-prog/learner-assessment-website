@@ -90,7 +90,7 @@ async function loadPass(){
       box.innerHTML=`<span class="tag warn">Waiting for payment confirmation</span><p>Pay <b>R${esc(d.price)}</b> using the details below. Use this payment reference: <b>${esc(d.pending.reference)}</b></p><div class="fb" style="white-space:pre-wrap">${esc(d.instructions)}</div><p class="m">Your pass starts when a lecturer or admin confirms your payment.</p><button class="btn sm" id="chk">Check payment</button>`;
       $('#chk').onclick=loadPass;
     }else{
-      box.innerHTML=`<p>Videos cost <b>R${esc(d.price)}</b> for a ${esc(d.hours)}-hour day pass. You can watch and replay any video as many times as you like while the pass is active.</p><button class="btn" id="getPass">Get a day pass</button>`;
+      box.innerHTML=`<p>Videos cost <b>R${esc(d.price)}</b> for a ${esc(d.hours)}-hour day pass. You can watch and replay any video as many times as you like while the pass is active.</p><p><b>Payment details</b></p><div class="fb" style="white-space:pre-wrap">${esc(d.instructions)}</div><p class="m">Press the button to get your payment reference, pay using the details above, then wait for a lecturer or admin to confirm your payment.</p><button class="btn" id="getPass">Get a day pass</button>`;
       $('#getPass').onclick=async()=>{try{await api('/pass/request',{method:'POST',body:'{}'});loadPass()}catch(x){alert(x.message)}};
     }
   }catch(e){$('#passBody').textContent=e.message}
