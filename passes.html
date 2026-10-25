@@ -1,0 +1,41 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Day Passes | RISE COLLECTIVE</title><link rel="stylesheet" href="style.css"></head><body>
+<div class="top"><div class="brand"><div class="logo"></div><div>RISE COLLECTIVE<small>VIDEO DAY PASSES</small></div></div><div><a class="btn sm" href="lecturer.html">← Back</a> <button class="btn sm ghost" onclick="logout()">Logout</button></div></div>
+<main><div class="card"><div class="row"><h3>Day pass requests</h3><span class="m" id="count"></span></div>
+<p class="m">Check your bank or payment app for the learner's payment and reference, then press <b>Confirm payment</b>. The pass starts at that moment.</p>
+<div class="table"><table><thead><tr><th>Learner</th><th>Email</th><th>Reference</th><th>Amount</th><th>Status</th><th>Requested</th><th>Pass ends</th><th>Actions</th></tr></thead><tbody id="tb"></tbody></table></div></div></main>
+<script src="app.js"></script><script>
+const me=session();
+if(!me||(me.role!=='admin'&&me.role!=='lecturer')){location.href=me?'lecturer.html':'index.html'}
+const tb=$('#tb');
+const cls={pending:'warn',active:'ok',rejected:'bad',revoked:'bad'};
+function buttons(p){
+  const id=esc(p.id);
+  if(p.status==='pending')return `<button class="btn sm" data-a="confirm" data-id="${id}">Confirm payment</button> <button class="btn sm ghost" data-a="reject" data-id="${id}">Reject</button>`;
+  if(p.status==='active'&&new Date(p.expiresAt)>new Date())return `<button class="btn sm ghost" data-a="revoke" data-id="${id}">Revoke</button>`;
+  return '';
+}
+async function load(){
+  try{
+    const d=await api('/admin/passes');
+    const pend=d.passes.filter(p=>p.status==='pending').length;
+    $('#count').textContent='R'+d.price+' for '+d.hours+' hours'+(pend?' · '+pend+' waiting for confirmation':'');
+    tb.innerHTML=d.passes.length?d.passes.map(p=>{
+      const live=p.status==='active'&&new Date(p.expiresAt)<=new Date();
+      const st=live?'expired':p.status;
+      return `<tr><td>${esc(p.name)}</td><td>${esc(p.email)}</td><td><b>${esc(p.reference)}</b></td><td>R${esc(p.amount)}</td><td><span class="tag ${cls[p.status]||''}">${esc(st)}</span></td><td>${fmt(p.requestedAt)}</td><td>${p.expiresAt?fmt(p.expiresAt):'—'}</td><td>${buttons(p)}</td></tr>`;
+    }).join(''):'<tr><td colspan="8">No day pass requests yet.</td></tr>';
+  }catch(e){alert(e.message)}
+}
+tb.onclick=async e=>{
+  const b=e.target.closest('button');if(!b)return;
+  const a=b.dataset.a,id=b.dataset.id;
+  try{
+    if(a==='confirm'&&!confirm('Confirm that you received the payment? The day pass starts now.'))return;
+    if(a==='reject'&&!confirm('Reject this request?'))return;
+    if(a==='revoke'&&!confirm('Stop this learner\'s pass now?'))return;
+    await api('/admin/passes/'+id,{method:'PATCH',body:JSON.stringify({action:a})});
+    load();
+  }catch(x){alert(x.message)}
+};
+load();
+</script></body></html>
