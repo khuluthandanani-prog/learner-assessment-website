@@ -1,6 +1,10 @@
 <!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Notes &amp; Videos | RISE COLLECTIVE</title><link rel="stylesheet" href="style.css"></head><body>
 <div class="top"><div class="brand"><div class="logo"></div><div>RISE COLLECTIVE<small>NOTES &amp; VIDEOS</small></div></div><div><a class="btn sm" id="back" href="index.html">← Back</a> <button class="btn sm ghost" onclick="logout()">Logout</button></div></div>
 <main>
+<div class="card" id="passCard" hidden>
+<h3>Video day pass</h3>
+<div id="passBody" class="m">Loading...</div>
+</div>
 <div class="card" id="postCard" hidden>
 <h3>Post notes or a video</h3>
 <form id="pf">
@@ -26,7 +30,7 @@ const me=session();
 if(!me){location.href='index.html'}else{
 const staff=['admin','lecturer','tutor'].includes(me.role);
 $('#back').href=staff?'lecturer.html':'learner.html';
-if(staff)$('#postCard').hidden=false;
+if(staff)$('#postCard').hidden=false;else $('#passCard').hidden=false;
 let items=[];
 
 function typeUI(){const v=$('#typeSel').value==='video';$('#urlBox').hidden=!v;$('#fileBox').hidden=v;$('#pf').elements.url.required=v}
@@ -52,12 +56,8 @@ function render(){
   $('#list').innerHTML=rows.length?rows.map(r=>{
     const sid=esc(r.id);
     let b='';
-    if(r.type==='video'){
-      b+=toEmbed(r.url)?`<button class="btn sm" data-a="watch" data-id="${sid}">▶ Watch</button> `:'';
-      b+=`<a class="btn sm ghost" href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">Open link ↗</a> `;
-    }else if(r.fileName){
-      b+=`<button class="btn sm" data-a="dl" data-id="${sid}">⬇ ${esc(r.fileName)}</button> `;
-    }
+    if(r.type==='video')b+=`<button class="btn sm" data-a="watch" data-id="${sid}">▶ Watch</button> `;
+    else if(r.fileName)b+=`<button class="btn sm" data-a="dl" data-id="${sid}">⬇ ${esc(r.fileName)}</button> `;
     if(canDelete(r))b+=`<button class="btn sm ghost" data-a="del" data-id="${sid}">Delete</button>`;
     return `<div class="card"><div class="row"><h3>${esc(r.title)}</h3><div><span class="tag">${esc(r.subject)}</span> <span class="tag ${r.type==='video'?'warn':'ok'}">${r.type==='video'?'Video':'Notes'}</span></div></div>`+
       (r.desc?`<p style="white-space:pre-wrap">${esc(r.desc)}</p>`:'')+
@@ -78,6 +78,24 @@ async function load(){
 }
 $('#fs').onchange=render;$('#ft').onchange=render;
 
+// ---- Day pass (learners) ----
+async function loadPass(){
+  if(staff)return;
+  try{
+    const d=await api('/pass/me');
+    const box=$('#passBody');
+    if(d.active){
+      box.innerHTML=`<span class="tag ok">Day pass active</span> until <b>${esc(fmt(d.expiresAt))}</b>. Watch the videos as many times as you like until then.`;
+    }else if(d.pending){
+      box.innerHTML=`<span class="tag warn">Waiting for payment confirmation</span><p>Pay <b>R${esc(d.price)}</b> using the details below. Use this payment reference: <b>${esc(d.pending.reference)}</b></p><div class="fb" style="white-space:pre-wrap">${esc(d.instructions)}</div><p class="m">Your pass starts when a lecturer or admin confirms your payment.</p><button class="btn sm" id="chk">Check payment</button>`;
+      $('#chk').onclick=loadPass;
+    }else{
+      box.innerHTML=`<p>Videos cost <b>R${esc(d.price)}</b> for a ${esc(d.hours)}-hour day pass. You can watch and replay any video as many times as you like while the pass is active.</p><button class="btn" id="getPass">Get a day pass</button>`;
+      $('#getPass').onclick=async()=>{try{await api('/pass/request',{method:'POST',body:'{}'});loadPass()}catch(x){alert(x.message)}};
+    }
+  }catch(e){$('#passBody').textContent=e.message}
+}
+
 $('#list').onclick=async e=>{
   const b=e.target.closest('button');if(!b)return;
   const a=b.dataset.a,rid=b.dataset.id;
@@ -88,10 +106,17 @@ $('#list').onclick=async e=>{
     }else if(a==='watch'){
       const box=document.getElementById('v-'+rid);
       if(box.firstChild){box.innerHTML='';return}
-      const r=items.find(x=>x.id===rid),src=r&&toEmbed(r.url);if(!src)return;
-      const f=document.createElement('iframe');f.src=src;f.allowFullscreen=true;f.setAttribute('allow','accelerometer; autoplay; encrypted-media; picture-in-picture; fullscreen');
-      f.style.cssText='width:100%;aspect-ratio:16/9;border:0;border-radius:8px;margin-top:10px';
-      box.appendChild(f);
+      let d;
+      try{d=await api('/resources/'+rid+'/video')}
+      catch(x){alert(x.message);if(!staff){window.scrollTo({top:0,behavior:'smooth'});loadPass()}return}
+      const src=toEmbed(d.url);
+      if(src){
+        const f=document.createElement('iframe');f.src=src;f.allowFullscreen=true;f.setAttribute('allow','accelerometer; autoplay; encrypted-media; picture-in-picture; fullscreen');
+        f.style.cssText='width:100%;aspect-ratio:16/9;border:0;border-radius:8px;margin-top:10px';
+        box.appendChild(f);
+      }
+      const l=document.createElement('a');l.href=d.url;l.target='_blank';l.rel='noopener noreferrer';l.className='btn sm ghost';l.textContent='Open link ↗';l.style.cssText='display:inline-block;margin-top:8px';
+      box.appendChild(l);
     }else if(a==='del'){
       if(!confirm('Delete this post?'))return;
       await api('/resources/'+rid,{method:'DELETE'});load();
@@ -107,6 +132,6 @@ $('#pf').onsubmit=async e=>{
     e.target.reset();typeUI();alert('Posted.');load();
   }catch(x){alert(x.message||x)}
 };
-load();
+load();loadPass();
 }
 </script></body></html>
