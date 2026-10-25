@@ -5,6 +5,7 @@ const { Pool } = require('pg');
 const path = require('path');
 
 const app = express();
+app.set('trust proxy', 1); // Render sits behind a proxy; this makes req.ip the visitor's real IP
 const PORT = process.env.PORT || 10000;
 
 const pool = new Pool({
@@ -22,6 +23,10 @@ const id = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8
 const PASS_PRICE = Number(process.env.PASS_PRICE) > 0 ? Number(process.env.PASS_PRICE) : 10;   // rand
 const PASS_HOURS = parseInt(process.env.PASS_HOURS, 10) > 0 ? parseInt(process.env.PASS_HOURS, 10) : 24;
 const PAY_INSTRUCTIONS = process.env.PAY_INSTRUCTIONS || 'Ask your lecturer for the payment details.';
+// Sharing report: a learner is flagged when, within one pass period, their videos were opened from
+// this many different internet addresses or different devices/browsers (or more)
+const SHARE_MAX_IPS = parseInt(process.env.SHARE_MAX_IPS, 10) > 0 ? parseInt(process.env.SHARE_MAX_IPS, 10) : 3;
+const SHARE_MAX_DEVICES = parseInt(process.env.SHARE_MAX_DEVICES, 10) > 0 ? parseInt(process.env.SHARE_MAX_DEVICES, 10) : 3;
 
 async function init() {
   if (!process.env.DATABASE_URL) throw Error('DATABASE_URL is not configured');
@@ -30,7 +35,7 @@ async function init() {
   // Remove the variable afterwards, otherwise data is wiped on every restart.
   if (process.env.RESET_DATABASE === 'true') {
     console.log('RESET_DATABASE=true -> wiping all data');
-    await pool.query('DROP TABLE IF EXISTS rise_passes, rise_resources, rise_submissions, rise_assessments, rise_users CASCADE');
+    await pool.query('DROP TABLE IF EXISTS rise_video_log, rise_passes, rise_resources, rise_submissions, rise_assessments, rise_users CASCADE');
   }
 
   await pool.query(`
@@ -88,6 +93,15 @@ async function init() {
       activated_at TIMESTAMPTZ,
       expires_at TIMESTAMPTZ
     );
+    CREATE TABLE IF NOT EXISTS rise_video_log(
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES rise_users(id) ON DELETE CASCADE,
+      resource_id TEXT,
+      ip TEXT,
+      ua TEXT,
+      at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS rise_video_log_user_at ON rise_video_log(user_id, at);
   `);
 
   // Records who created each assessment (used to limit junior tutors to their own work)
@@ -474,6 +488,12 @@ app.get('/api/resources/:id/video', anyUser, async (req, res) => {
       );
       if (!p.rowCount)
         return res.status(403).json({ error: 'Day pass required. Get a day pass to watch videos.' });
+
+      // Record every time a learner opens a video (used by the sharing report)
+      await pool.query(
+        'INSERT INTO rise_video_log(id,user_id,resource_id,ip,ua) VALUES($1,$2,$3,$4,$5)',
+        [id(), req.user.id, req.params.id, String(req.ip || '').slice(0, 64), String(req.headers['user-agent'] || '').slice(0, 200)]
+      );
     }
     res.json({ url: r.rows[0].url });
   } catch (e) {
@@ -611,6 +631,57 @@ app.patch('/api/admin/passes/:id', admin, async (req, res) => {
       return res.status(400).json({ error: 'Invalid action' });
     }
     if (!r.rowCount) return res.status(409).json({ error: 'That request has already been handled.' });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ---- Sharing report (admins and lecturers only) ----
+// Learners who opened videos from many different internet addresses or devices within one pass period
+app.get('/api/admin/sharing', admin, async (req, res) => {
+  try {
+    const r = await pool.query(`
+      SELECT u.id,u.name,u.email,
+             COUNT(*)::int AS views,
+             COUNT(DISTINCT l.ip)::int AS ips,
+             COUNT(DISTINCT l.ua)::int AS devices,
+             MAX(l.at) AS "lastAt"
+      FROM rise_video_log l JOIN rise_users u ON u.id=l.user_id
+      WHERE l.at > NOW() - ($1::int * INTERVAL '1 hour')
+      GROUP BY u.id,u.name,u.email
+      ORDER BY COUNT(DISTINCT l.ip) DESC, COUNT(DISTINCT l.ua) DESC, COUNT(*) DESC
+      LIMIT 200`, [PASS_HOURS]);
+    const rows = r.rows.map(x => ({ ...x, flagged: x.ips >= SHARE_MAX_IPS || x.devices >= SHARE_MAX_DEVICES }));
+    res.json({
+      learners: rows,
+      flagged: rows.filter(x => x.flagged).length,
+      hours: PASS_HOURS, maxIps: SHARE_MAX_IPS, maxDevices: SHARE_MAX_DEVICES
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// The last 60 video openings for one learner
+app.get('/api/admin/sharing/:userId', admin, async (req, res) => {
+  try {
+    const r = await pool.query(`
+      SELECT l.at,l.ip,l.ua,COALESCE(rs.title,'(deleted video)') AS title
+      FROM rise_video_log l LEFT JOIN rise_resources rs ON rs.id=l.resource_id
+      WHERE l.user_id=$1 ORDER BY l.at DESC LIMIT 60`, [req.params.userId]);
+    res.json({ log: r.rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Stop all of a learner's active passes at once
+app.patch('/api/admin/sharing/:userId/revoke', admin, async (req, res) => {
+  try {
+    await pool.query(
+      "UPDATE rise_passes SET status='revoked',expires_at=NOW() WHERE user_id=$1 AND status='active'",
+      [req.params.userId]);
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
