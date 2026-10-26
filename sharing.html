@@ -6,7 +6,7 @@
 <div class="card" id="detail" hidden><div class="row"><h3 id="dtitle">Details</h3><button class="btn sm ghost" id="dclose">Close</button></div><div class="table"><table><thead><tr><th>Time</th><th>Video</th><th>Internet address</th><th>Device / browser</th></tr></thead><tbody id="dtb"></tbody></table></div></div></main>
 <script src="app.js"></script><script>
 const me=session();
-if(!me||(me.role!=='admin'&&me.role!=='lecturer')){location.href=me?'lecturer.html':'index.html'}
+if(!me||me.role!=='admin'){location.href=me?'lecturer.html':'index.html'}
 const tb=$('#tb');
 async function load(){
   try{
