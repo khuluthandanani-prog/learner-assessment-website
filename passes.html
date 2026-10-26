@@ -5,7 +5,7 @@
 <div class="table"><table><thead><tr><th>Learner</th><th>Email</th><th>Reference</th><th>Amount</th><th>Status</th><th>Requested</th><th>Pass ends</th><th>Actions</th></tr></thead><tbody id="tb"></tbody></table></div></div></main>
 <script src="app.js"></script><script>
 const me=session();
-if(!me||(me.role!=='admin'&&me.role!=='lecturer')){location.href=me?'lecturer.html':'index.html'}
+if(!me||me.role!=='admin'){location.href=me?'lecturer.html':'index.html'}
 const tb=$('#tb');
 const cls={pending:'warn',active:'ok',rejected:'bad',revoked:'bad'};
 function buttons(p){
