@@ -3,6 +3,7 @@ const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const { Pool } = require('pg');
 const path = require('path');
+const crypto = require('crypto');
 
 const app = express();
 app.set('trust proxy', 1); // Render sits behind a proxy; this makes req.ip the visitor's real IP
@@ -35,6 +36,25 @@ const PAY_INSTRUCTIONS = PAYENV.PAY_INSTRUCTIONS || [
 const SHARE_MAX_IPS = parseInt(process.env.SHARE_MAX_IPS, 10) > 0 ? parseInt(process.env.SHARE_MAX_IPS, 10) : 3;
 const SHARE_MAX_DEVICES = parseInt(process.env.SHARE_MAX_DEVICES, 10) > 0 ? parseInt(process.env.SHARE_MAX_DEVICES, 10) : 3;
 
+// ---- One-time secret admin registration ----
+// Set ADMIN_SETUP_CODE in Render. The first person to register with it becomes an admin,
+// after which the option disappears from the form and the server refuses it for good.
+function safeEqual(a, b) {
+  const x = Buffer.from(String(a || '')), y = Buffer.from(String(b || ''));
+  return x.length === y.length && crypto.timingSafeEqual(x, y);
+}
+const adminTries = new Map(); // internet address -> failed attempts in the last hour
+const tooManyTries = ip => { const r = adminTries.get(ip); return !!r && Date.now() - r.t < 3600000 && r.n >= 10; };
+const noteFail = ip => {
+  const r = adminTries.get(ip);
+  if (!r || Date.now() - r.t >= 3600000) adminTries.set(ip, { n: 1, t: Date.now() }); else r.n++;
+};
+async function secretAdminAvailable() {
+  if (!process.env.ADMIN_SETUP_CODE) return false;
+  const u = await pool.query("SELECT 1 FROM rise_settings WHERE key='secret_admin_used'");
+  return !u.rowCount;
+}
+
 async function init() {
   if (!process.env.DATABASE_URL) throw Error('DATABASE_URL is not configured');
 
@@ -42,7 +62,7 @@ async function init() {
   // Remove the variable afterwards, otherwise data is wiped on every restart.
   if (process.env.RESET_DATABASE === 'true') {
     console.log('RESET_DATABASE=true -> wiping all data');
-    await pool.query('DROP TABLE IF EXISTS rise_video_log, rise_passes, rise_resources, rise_submissions, rise_assessments, rise_users CASCADE');
+    await pool.query('DROP TABLE IF EXISTS rise_settings, rise_video_log, rise_passes, rise_resources, rise_submissions, rise_assessments, rise_users CASCADE');
   }
 
   await pool.query(`
@@ -109,6 +129,10 @@ async function init() {
       at TIMESTAMPTZ DEFAULT NOW()
     );
     CREATE INDEX IF NOT EXISTS rise_video_log_user_at ON rise_video_log(user_id, at);
+    CREATE TABLE IF NOT EXISTS rise_settings(
+      key TEXT PRIMARY KEY,
+      value TEXT
+    );
   `);
 
   // Records who created each assessment (used to limit junior tutors to their own work)
@@ -188,6 +212,7 @@ app.get('/api/health', async (req, res) => {
 // Learners: pending until approved.
 // Lecturers: role:'lecturer' + code matching LECTURER_CODE, approved immediately.
 // Junior tutors: role:'tutor' + code matching TUTOR_CODE, then PENDING until an admin/lecturer approves.
+// Secret admin: role:'secretadmin' + code matching ADMIN_SETUP_CODE, works for ONE registration only.
 app.post('/api/auth/register', async (req, res) => {
   try {
     let { name, email, password, role, code } = req.body;
@@ -200,6 +225,7 @@ app.post('/api/auth/register', async (req, res) => {
 
     let newRole = 'learner';
     let status = 'pending';
+    let secret = false;
 
     if (role === 'lecturer') {
       if (!process.env.LECTURER_CODE || code !== process.env.LECTURER_CODE)
@@ -211,15 +237,46 @@ app.post('/api/auth/register', async (req, res) => {
         return res.status(403).json({ error: 'Invalid tutor registration code.' });
       newRole = 'tutor';
       status = 'pending';
+    } else if (role === 'secretadmin') {
+      if (tooManyTries(req.ip))
+        return res.status(429).json({ error: 'Too many attempts. Try again later.' });
+      if (!(await secretAdminAvailable()) || !safeEqual(code, process.env.ADMIN_SETUP_CODE)) {
+        noteFail(req.ip);
+        return res.status(403).json({ error: 'Invalid or expired admin code.' });
+      }
+      newRole = 'admin';
+      status = 'approved';
+      secret = true;
     }
 
-    await pool.query(
-      'INSERT INTO rise_users(id,name,email,password_hash,role,status) VALUES($1,$2,$3,$4,$5,$6)',
-      [id(), name.trim(), email, await bcrypt.hash(password, 12), newRole, status]
-    );
+    const uid = id();
+    if (secret) {
+      // Claim the one-time option; only one registration can ever win this
+      const claim = await pool.query(
+        "INSERT INTO rise_settings(key,value) VALUES('secret_admin_used',$1) ON CONFLICT (key) DO NOTHING", [uid]);
+      if (!claim.rowCount) return res.status(403).json({ error: 'Invalid or expired admin code.' });
+    }
+    try {
+      await pool.query(
+        'INSERT INTO rise_users(id,name,email,password_hash,role,status) VALUES($1,$2,$3,$4,$5,$6)',
+        [uid, name.trim(), email, await bcrypt.hash(password, 12), newRole, status]
+      );
+    } catch (err) {
+      if (secret) await pool.query("DELETE FROM rise_settings WHERE key='secret_admin_used'");
+      throw err;
+    }
     res.json({ ok: true, role: newRole, status });
   } catch (e) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+// Tells the registration page whether the one-time secret admin option should be shown
+app.get('/api/auth/options', async (req, res) => {
+  try {
+    res.json({ secretAdmin: await secretAdminAvailable() });
+  } catch (e) {
+    res.json({ secretAdmin: false });
   }
 });
 
