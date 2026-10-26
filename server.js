@@ -213,6 +213,8 @@ app.get('/api/health', async (req, res) => {
 // Lecturers: role:'lecturer' + code matching LECTURER_CODE, approved immediately.
 // Junior tutors: role:'tutor' + code matching TUTOR_CODE, then PENDING until an admin/lecturer approves.
 // Secret admin: role:'secretadmin' + code matching ADMIN_SETUP_CODE, works for ONE registration only.
+//   New email  -> creates a new admin account.
+//   Existing email + that account's current password -> upgrades that account to admin.
 app.post('/api/auth/register', async (req, res) => {
   try {
     let { name, email, password, role, code } = req.body;
@@ -220,12 +222,15 @@ app.post('/api/auth/register', async (req, res) => {
       return res.status(400).json({ error: 'Name, email and password (6+ characters) are required.' });
 
     email = email.trim().toLowerCase();
-    if ((await pool.query('SELECT 1 FROM rise_users WHERE email=$1', [email])).rowCount)
+    const ex = await pool.query('SELECT id,password_hash,role FROM rise_users WHERE email=$1', [email]);
+    // An existing email is only allowed for the secret admin upgrade below
+    if (ex.rowCount && role !== 'secretadmin')
       return res.status(409).json({ error: 'Email already registered.' });
 
     let newRole = 'learner';
     let status = 'pending';
     let secret = false;
+    let upgradeId = null;
 
     if (role === 'lecturer') {
       if (!process.env.LECTURER_CODE || code !== process.env.LECTURER_CODE)
@@ -244,12 +249,22 @@ app.post('/api/auth/register', async (req, res) => {
         noteFail(req.ip);
         return res.status(403).json({ error: 'Invalid or expired admin code.' });
       }
+      if (ex.rowCount) {
+        // Upgrade an existing account: needs the secret code AND that account's current password
+        if (!(await bcrypt.compare(password, ex.rows[0].password_hash))) {
+          noteFail(req.ip);
+          return res.status(403).json({ error: 'Invalid or expired admin code.' });
+        }
+        if (ex.rows[0].role === 'admin')
+          return res.status(400).json({ error: 'That account is already an admin.' });
+        upgradeId = ex.rows[0].id;
+      }
       newRole = 'admin';
       status = 'approved';
       secret = true;
     }
 
-    const uid = id();
+    const uid = upgradeId || id();
     if (secret) {
       // Claim the one-time option; only one registration can ever win this
       const claim = await pool.query(
@@ -257,15 +272,19 @@ app.post('/api/auth/register', async (req, res) => {
       if (!claim.rowCount) return res.status(403).json({ error: 'Invalid or expired admin code.' });
     }
     try {
-      await pool.query(
-        'INSERT INTO rise_users(id,name,email,password_hash,role,status) VALUES($1,$2,$3,$4,$5,$6)',
-        [uid, name.trim(), email, await bcrypt.hash(password, 12), newRole, status]
-      );
+      if (upgradeId) {
+        await pool.query("UPDATE rise_users SET role='admin',status='approved' WHERE id=$1", [upgradeId]);
+      } else {
+        await pool.query(
+          'INSERT INTO rise_users(id,name,email,password_hash,role,status) VALUES($1,$2,$3,$4,$5,$6)',
+          [uid, name.trim(), email, await bcrypt.hash(password, 12), newRole, status]
+        );
+      }
     } catch (err) {
       if (secret) await pool.query("DELETE FROM rise_settings WHERE key='secret_admin_used'");
       throw err;
     }
-    res.json({ ok: true, role: newRole, status });
+    res.json({ ok: true, role: newRole, status, upgraded: !!upgradeId });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
