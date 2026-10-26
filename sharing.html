@@ -1,37 +1,10 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sharing Report | RISE COLLECTIVE</title><link rel="stylesheet" href="style.css"></head><body>
-<div class="top"><div class="brand"><div class="logo"></div><div>RISE COLLECTIVE<small>SHARING REPORT</small></div></div><div><a class="btn sm" href="lecturer.html">← Back</a> <button class="btn sm ghost" onclick="logout()">Logout</button></div></div>
-<main><div class="card"><div class="row"><h3>Video sharing report</h3><span class="m" id="count"></span></div>
-<p class="m" id="note"></p>
-<div class="table"><table><thead><tr><th>Learner</th><th>Email</th><th>Videos opened</th><th>Different internet addresses</th><th>Different devices</th><th>Last opened</th><th>Flag</th><th>Actions</th></tr></thead><tbody id="tb"></tbody></table></div></div>
-<div class="card" id="detail" hidden><div class="row"><h3 id="dtitle">Details</h3><button class="btn sm ghost" id="dclose">Close</button></div><div class="table"><table><thead><tr><th>Time</th><th>Video</th><th>Internet address</th><th>Device / browser</th></tr></thead><tbody id="dtb"></tbody></table></div></div></main>
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sharing Report | RISE COLLECTIVE</title><link rel="stylesheet" href="style.css"><link rel="stylesheet" href="tiles.css"></head><body>
+<header class="top"><div class="brand"><span class="logo"></span><div>RISE COLLECTIVE<small>SHARING REPORT</small></div></div><div>👤 <span id="who"></span> <button class="btn sm" onclick="logout()">Logout</button></div></header><main><a class="back" href="lecturer.html">← Home</a><h2>Sharing Report</h2><p class="m" id="info"></p><div id="list" class="boxes"></div></main>
 <script src="app.js"></script><script>
-const me=session();
-if(!me||me.role!=='admin'){location.href=me?'lecturer.html':'index.html'}
-const tb=$('#tb');
-async function load(){
-  try{
-    const d=await api('/admin/sharing');
-    $('#count').textContent=d.learners.length+' learner(s) in the last '+d.hours+' hours · '+d.flagged+' flagged';
-    $('#note').textContent='A learner is flagged when their videos were opened from '+d.maxIps+' or more different internet addresses, or '+d.maxDevices+' or more different devices, in the last '+d.hours+' hours. Phones switching between wifi and mobile data can cause false flags, so look at the details before acting.';
-    tb.innerHTML=d.learners.length?d.learners.map(l=>`<tr><td>${esc(l.name)}</td><td>${esc(l.email)}</td><td>${l.views}</td><td>${l.ips}</td><td>${l.devices}</td><td>${fmt(l.lastAt)}</td><td>${l.flagged?'<span class="tag bad">Possible sharing</span>':'<span class="tag ok">OK</span>'}</td><td><button class="btn sm" data-a="view" data-id="${esc(l.id)}" data-n="${esc(l.name)}">Details</button> <button class="btn sm ghost" data-a="revoke" data-id="${esc(l.id)}" data-n="${esc(l.name)}">Revoke pass</button></td></tr>`).join(''):'<tr><td colspan="8">No videos have been opened in this period.</td></tr>';
-  }catch(e){alert(e.message)}
-}
-tb.onclick=async e=>{
-  const b=e.target.closest('button');if(!b)return;
-  const a=b.dataset.a,id=b.dataset.id,n=b.dataset.n;
-  try{
-    if(a==='view'){
-      const d=await api('/admin/sharing/'+id);
-      $('#dtitle').textContent='Recent video activity: '+n;
-      $('#dtb').innerHTML=d.log.length?d.log.map(x=>`<tr><td>${fmt(x.at)}</td><td>${esc(x.title)}</td><td>${esc(x.ip)}</td><td style="max-width:360px;word-break:break-word">${esc(x.ua)}</td></tr>`).join(''):'<tr><td colspan="4">Nothing recorded.</td></tr>';
-      $('#detail').hidden=false;$('#detail').scrollIntoView({behavior:'smooth'});
-    }else if(a==='revoke'){
-      if(!confirm('Stop all active passes for '+n+' now?'))return;
-      await api('/admin/sharing/'+id+'/revoke',{method:'PATCH',body:'{}'});
-      alert('Pass stopped.');load();
-    }
-  }catch(x){alert(x.message)}
-};
-$('#dclose').onclick=()=>{$('#detail').hidden=true};
-load();
+const u=guard('admin');if(u&&u.role!=='admin')location.href='lecturer.html';
+async function render(){try{const d=await api('/admin/sharing');$('#info').textContent='A learner is flagged when videos were opened from '+d.maxIps+' or more internet addresses, or '+d.maxDevices+' or more devices, within '+d.hours+' hours.';
+$('#list').innerHTML=d.learners.length?d.learners.map(l=>`<div class="card" ${l.flagged?'style="border:2px solid #c0392b"':''}><div class="row"><h3>${esc(l.name)}</h3>${l.flagged?'<span class="tag bad">🚩 Flagged</span>':'<span class="tag ok">OK</span>'}</div><p class="m">${esc(l.email)}</p><p>Videos opened: <b>${l.views}</b></p><p>Internet addresses: <b>${l.ips}</b> · Devices: <b>${l.devices}</b></p><p class="m">Last opened: ${fmt(l.lastAt)}</p><p><button class="btn sm ghost" onclick="showLog('${l.id}')">Details</button> <button class="btn sm ghost" onclick="revoke('${l.id}')">Stop day pass</button></p><div id="log${l.id}" hidden></div></div>`).join(''):'<p class="m">No video views in this period.</p>'}catch(e){$('#list').innerHTML='<div class="card"><b>Unable to load.</b><p>'+esc(e.message)+'</p></div>'}}
+async function showLog(id){const box=$('#log'+id);if(!box.hidden){box.hidden=true;return}try{const d=await api('/admin/sharing/'+id);box.innerHTML=d.log.map(l=>`<p class="m">${fmt(l.at)} · ${esc(l.title)}<br>${esc(l.ip)} · ${esc(l.ua)}</p>`).join('')||'<p class="m">No views.</p>';box.hidden=false}catch(e){alert(e.message)}}
+async function revoke(id){if(!confirm("Stop all of this learner's active day passes?"))return;try{await api('/admin/sharing/'+id+'/revoke',{method:'PATCH'});alert('Day pass stopped.');render()}catch(e){alert(e.message)}}
+render();
 </script></body></html>
