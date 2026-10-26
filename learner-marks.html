@@ -1,0 +1,9 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>My Marks | RISE COLLECTIVE</title><link rel="stylesheet" href="style.css"><link rel="stylesheet" href="tiles.css"></head><body>
+<header class="top"><div class="brand"><span class="logo"></span><div>RISE COLLECTIVE<small>LEARNER PORTAL</small></div></div><div>👤 <span id="who"></span> <button class="btn sm" onclick="logout()">Logout</button></div></header><main><a class="back" href="learner.html">← Home</a> · <a class="back" href="learner-assessments.html">Assessments</a><h2>My Marks</h2><div id="avg"></div><div id="list"></div></main>
+<script src="app.js"></script><script>
+const u=guard('learner');
+(async()=>{try{const d=await api('/learner/data?userId='+encodeURIComponent(u.id));
+const R=d.submissions.filter(s=>s.mark!=null).map(s=>({s,a:d.assessments.find(a=>a.id===s.aid)})).filter(r=>r.a);
+if(R.length){const got=R.reduce((n,r)=>n+Number(r.s.mark),0),tot=R.reduce((n,r)=>n+Number(r.a.total),0);$('#avg').innerHTML=`<div class="card"><b>Overall: ${got}/${tot}${tot?' ('+Math.round(got/tot*100)+'%)':''}</b></div>`}
+$('#list').innerHTML=R.length?R.map(r=>`<div class="card"><div class="row"><h3>${esc(r.a.title)}</h3><span class="tag ok">${r.s.mark}/${r.a.total}</span></div><p class="m">Submitted ${fmt(r.s.at)} ${fileLink(r.s.file)}</p>${r.s.feedback?`<div class="fb"><b>Feedback:</b> ${esc(r.s.feedback)}</div>`:''}</div>`).join(''):'<p class="m">No marked work yet.</p>'}catch(e){$('#list').innerHTML='<div class="card"><b>Unable to load marks.</b><p>'+esc(e.message)+'</p></div>'}})();
+</script></body></html>
