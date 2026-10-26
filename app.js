@@ -12,15 +12,24 @@ async function api(path,opts={}){const me=session();const r=await fetch(API+path
 function guard(role){const u=session();const staff=r=>r==='admin'||r==='lecturer'||r==='tutor';const ok=u&&(staff(role)?staff(u.role):u.role===role);if(!ok){logout();return null}const w=$('#who');if(w)w.textContent=u.name;return u}
 const readFile=f=>new Promise((res,rej)=>{if(!f)return res(null);if(f.size>1.5e6)return rej('File too large (max 1.5MB).');const r=new FileReader();r.onload=()=>res({name:f.name,data:r.result});r.onerror=()=>rej('Could not read file.');r.readAsDataURL(f)});
 const fileLink=f=>f?`<a class="btn sm" href="${f.data}" download="${esc(f.name)}">⬇ ${esc(f.name)}</a>`:'';
-// Junior tutors: hide the "Learners" tab (the server also refuses learner management)
-function hideTutorTabs(){const u=session();if(!u||u.role!=='tutor')return;$$('button').forEach(b=>{const t=b.textContent.trim();if(t.length<25&&/learners/i.test(t))b.style.display='none'})}
-// Admins and lecturers: shortcut to the registered junior tutors page
-function addTutorLink(){const u=session();if(!u||(u.role!=='admin'&&u.role!=='lecturer')||!/lecturer\.html/.test(location.pathname)||$('#tutorsLink'))return;const a=document.createElement('a');a.id='tutorsLink';a.href='tutors.html';a.className='btn';a.textContent='👥 Junior Tutors';a.style.cssText='position:fixed;right:14px;bottom:14px;box-shadow:0 2px 8px #0004;z-index:50';document.body.appendChild(a)}
-// ADMIN ONLY: shortcut to the video day pass requests
-function addPassLink(){const u=session();if(!u||u.role!=='admin'||!/lecturer\.html/.test(location.pathname)||$('#passLink'))return;const a=document.createElement('a');a.id='passLink';a.href='passes.html';a.className='btn';a.textContent='💳 Day Passes';a.style.cssText='position:fixed;right:14px;bottom:62px;box-shadow:0 2px 8px #0004;z-index:50';document.body.appendChild(a)}
-// ADMIN ONLY: shortcut to the sharing report, with a red count when someone is flagged
-function addShareLink(){const u=session();if(!u||u.role!=='admin'||!/lecturer\.html/.test(location.pathname)||$('#shareLink'))return;const a=document.createElement('a');a.id='shareLink';a.href='sharing.html';a.className='btn';a.textContent='🚩 Sharing Report';a.style.cssText='position:fixed;right:14px;bottom:110px;box-shadow:0 2px 8px #0004;z-index:50';document.body.appendChild(a);api('/admin/sharing').then(d=>{if(d.flagged>0){a.textContent='🚩 Sharing Report ('+d.flagged+')';a.style.background='#c0392b';a.style.color='#fff'}}).catch(()=>{})}
-// Everyone logged in: shortcut to the notes and videos page
-function addResLink(){const u=session();if(!u||!/(lecturer|learner)\.html/.test(location.pathname)||$('#resLink'))return;const a=document.createElement('a');a.id='resLink';a.href='resources.html';a.className='btn';a.textContent='📚 Notes & Videos';a.style.cssText='position:fixed;left:14px;bottom:14px;box-shadow:0 2px 8px #0004;z-index:50';document.body.appendChild(a)}
-function addLinks(){hideTutorTabs();addTutorLink();addPassLink();addShareLink();addResLink()}
+
+// Junior tutors: hide the "Learners" tab and square (the server also refuses learner management)
+function hideTutorTabs(){const u=session();if(!u||u.role!=='tutor')return;$$('button').forEach(b=>{const t=b.textContent.trim();if(t.length<25&&/learners/i.test(t))b.style.display='none'});$$('.tile[data-t="lp"]').forEach(t=>t.style.display='none')}
+
+// Adds one large square to the home screen (only on pages that have a .tiles grid)
+function addTile(id,href,ico,title,desc){const box=$('.tiles');if(!box||$('#'+id))return null;const a=document.createElement('a');a.id=id;a.className='tile';a.href=href;a.innerHTML='<span class="ico">'+ico+'</span><div><div class="count" hidden></div><h3>'+title+'</h3><p>'+desc+'</p></div>';box.appendChild(a);return a}
+
+function addLinks(){
+ const u=session();if(!u)return;
+ const onLec=/lecturer\.html/.test(location.pathname),onAny=/(lecturer|learner)\.html/.test(location.pathname);
+ // Admins and lecturers: registered junior tutors
+ if(onLec&&(u.role==='admin'||u.role==='lecturer'))addTile('tutorsLink','tutors.html','👥','Junior Tutors','Registered junior tutors');
+ // Admin only: video day pass requests
+ if(onLec&&u.role==='admin')addTile('passLink','passes.html','💳','Day Passes','Video day pass requests');
+ // Admin only: sharing report, with a red count when someone is flagged
+ if(onLec&&u.role==='admin'){const a=addTile('shareLink','sharing.html','🚩','Sharing Report','Accounts flagged for sharing');if(a)api('/admin/sharing').then(d=>{if(d.flagged>0){const c=$('.count',a);c.textContent=d.flagged;c.hidden=false;a.style.borderColor='#c0392b'}}).catch(()=>{})}
+ // Everyone logged in: notes and videos
+ if(onAny)addTile('resLink','resources.html','📚','Notes & Videos','Study material');
+ hideTutorTabs();
+}
 document.addEventListener('DOMContentLoaded',addLinks);window.addEventListener('load',addLinks);
