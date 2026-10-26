@@ -4,17 +4,14 @@
 <a class="tile" href="#" data-t="ap"><span class="ico">📝</span><div><div class="count" id="cAs">–</div><h3>Assessments</h3><p>Create and manage assessments</p></div></a>
 <a class="tile" href="#" data-t="sp"><span class="ico">✅</span><div><div class="count" id="cMk">–</div><h3>Marking</h3><p>Submissions waiting to be marked</p></div></a>
 <a class="tile" href="#" data-t="lp"><span class="ico">👥</span><div><div class="count" id="cLrn">–</div><h3>Learners</h3><p>Pending approvals and accounts</p></div></a>
-<a class="tile" href="#" data-t="np"><span class="ico">🎥</span><div><h3>Notes &amp; Videos</h3><p>Study material for learners</p></div></a>
 </div></div>
 <div id="ap" class="pane" hidden><a class="back" href="#" onclick="tab('home');return false">← Home</a><div class="card"><h3>New assessment</h3><form id="af"><label>Title</label><input name="ttl" required><label>Instructions</label><textarea name="desc"></textarea><div class="row"><div><label>Total marks</label><input name="total" type="number" min="1" value="100" required></div><div><label>Deadline</label><input name="due" type="datetime-local" required></div></div><label>Attach file (optional, max 1.5MB)</label><input name="file" type="file"><button class="btn">Publish</button></form></div><div id="al"></div><p class="m">Registration link: <b id="lnk"></b></p></div>
 <div id="lp" class="pane" hidden><a class="back" href="#" onclick="tab('home');return false">← Home</a><div id="ll"></div></div>
-<div id="sp" class="pane" hidden><a class="back" href="#" onclick="tab('home');return false">← Home</a><label>Assessment</label><select id="sel"></select><div id="sub"></div></div>
-<div id="np" class="pane" hidden><a class="back" href="#" onclick="tab('home');return false">← Home</a><h2>Notes &amp; Videos</h2><div id="nl"></div></div></main>
-<script src="app.js"></script><script src="resources.js"></script><script>
+<div id="sp" class="pane" hidden><a class="back" href="#" onclick="tab('home');return false">← Home</a><label>Assessment</label><select id="sel"></select><div id="sub"></div></div></main>
+<script src="app.js"></script><script>
 const u=guard('admin')||guard('lecturer');let cur=null;$('#lnk').textContent=location.href.replace('lecturer.html','index.html?register');
 function tab(n){$('#home').hidden=n!=='home';$$('.pane').forEach(p=>p.hidden=p.id!==n);render()}
 $$('.tile[data-t]').forEach(t=>t.onclick=e=>{e.preventDefault();tab(t.dataset.t)});
-renderResources($('#nl'));
 $('#af').onsubmit=async e=>{e.preventDefault();const f=e.target.elements;let file;try{file=await readFile(f.file.files[0])}catch(x){return alert(x)}try{await api('/assessments',{method:'POST',body:JSON.stringify({title:f.ttl.value,desc:f.desc.value,total:+f.total.value,due:f.due.value,file})});e.target.reset();render();alert('Assessment published.')}catch(x){alert(x.message)}};
 async function setSt(id,status){try{await api('/admin/users/'+id,{method:'PATCH',body:JSON.stringify({status})});render()}catch(x){alert(x.message)}}
 async function delU(id){if(!confirm('Delete this learner and submissions?'))return;try{await api('/admin/users/'+id,{method:'DELETE'});render()}catch(x){alert(x.message)}}
