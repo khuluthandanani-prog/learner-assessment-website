@@ -1,8 +1,32 @@
-// EDIT THIS LIST: one line per item. type is 'note' or 'video'.
-const RESOURCES=[
- {type:'note',title:'Example: Course notes (PDF)',desc:'Replace this with your own note',link:'https://example.com/notes.pdf'},
- {type:'video',title:'Example: Lesson 1 video',desc:'Replace this with your own video',link:'https://www.youtube.com/watch?v=VIDEO_ID'}
-];
-function renderResources(el){
- el.innerHTML=RESOURCES.length?RESOURCES.map(r=>`<div class="card"><div class="row"><h3>${r.type==='video'?'🎥':'📄'} ${esc(r.title)}</h3><span class="tag">${r.type==='video'?'Video':'Notes'}</span></div><p>${esc(r.desc||'')}</p><a class="btn sm" href="${esc(r.link)}" target="_blank" rel="noopener">${r.type==='video'?'Watch':'Open'}</a></div>`).join(''):'<p class="m">No notes or videos yet.</p>';
-}
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Notes &amp; Videos | RISE COLLECTIVE</title><link rel="stylesheet" href="style.css"><link rel="stylesheet" href="tiles.css?v=3">
+<style>
+.boxes{display:grid!important;grid-template-columns:repeat(auto-fill,minmax(320px,1fr))!important;gap:24px!important;margin:20px 0!important}
+.boxes>.card{aspect-ratio:1/1!important;overflow:auto!important;margin:0!important;padding:28px!important;box-sizing:border-box!important;width:auto!important;max-width:none!important;border-radius:20px!important}
+.boxes>p{grid-column:1/-1}
+.boxes textarea,.boxes input,.boxes select{width:100%;box-sizing:border-box}
+.back{display:inline-block;margin:0 0 14px}
+@media(max-width:480px){.boxes>.card{aspect-ratio:auto!important;min-height:340px}}
+</style></head><body>
+<header class="top"><div class="brand"><span class="logo"></span><div>RISE COLLECTIVE<small>NOTES &amp; VIDEOS</small></div></div><div>👤 <span id="who"></span> <button class="btn sm" onclick="logout()">Logout</button></div></header><main><a class="back" id="home" href="#">← Home</a><h2>Notes &amp; Videos</h2><div id="list" class="boxes"></div></main>
+<script src="app.js"></script><script>
+const s0=session(),u=guard(s0&&s0.role==='learner'?'learner':'admin');
+if(u)$('#home').href=u.role==='learner'?'learner.html':'lecturer.html';
+const staff=!!u&&u.role!=='learner';
+function formBox(){return `<div class="card"><h3>➕ Add notes or video</h3><form id="rf"><label>Subject</label><input name="sub" required><label>Title</label><input name="ttl" required><label>Type</label><select name="type" id="ty"><option value="note">Notes</option><option value="video">Video link</option></select><label>Description / notes text</label><textarea name="desc"></textarea><div id="vb" hidden><label>Video link</label><input name="url" placeholder="https://"></div><div id="fb"><label>Attach file (max 1.5MB)</label><input name="file" type="file"></div><button class="btn">Post</button></form></div>`}
+async function passBox(){try{const p=await api('/pass/me');let b;
+ if(p.active)b=`<span class="tag ok">Day pass active</span><p class="m">Videos unlocked until ${fmt(p.expiresAt)}</p>`;
+ else if(p.pending)b=`<span class="tag warn">Waiting for payment confirmation</span><p>Pay R${p.price} and use this reference:</p><p><b>${esc(p.pending.reference)}</b></p><p style="white-space:pre-wrap">${esc(p.instructions)}</p><p class="m">An admin activates your pass once the payment is confirmed.</p>`;
+ else b=`<p>Videos need a day pass: R${p.price} for ${p.hours} hours. Notes are free.</p><button class="btn" onclick="getPass()">Get day pass</button>`;
+ return `<div class="card"><h3>💳 Day pass</h3>${b}</div>`}catch(e){return ''}}
+async function render(){try{let h=staff?formBox():await passBox();const d=await api('/resources');
+ h+=d.resources.map(r=>{const mine=u.role!=='tutor'||r.createdBy===u.id;return `<div class="card"><div class="row"><h3>${r.type==='video'?'🎥':'📄'} ${esc(r.title)}</h3><span class="tag">${esc(r.subject)}</span></div><p class="m">${r.type==='video'?'Video':'Notes'} · ${esc(r.by||'')} · ${fmt(r.at)}</p><p>${esc(r.desc)}</p>${r.type==='video'?`<button class="btn sm" onclick="watch('${r.id}')">▶ Watch</button>`:(r.fileName?`<button class="btn sm" onclick="dl('${r.id}')">⬇ ${esc(r.fileName)}</button>`:'')}${staff&&mine?` <button class="btn sm ghost" onclick="del('${r.id}')">Delete</button>`:''}</div>`}).join('');
+ if(!d.resources.length)h+='<p class="m">No notes or videos yet.</p>';$('#list').innerHTML=h}catch(e){$('#list').innerHTML='<div class="card"><b>Unable to load.</b><p>'+esc(e.message)+'</p></div>'}}
+async function getPass(){try{await api('/pass/request',{method:'POST',body:'{}'});render()}catch(e){alert(e.message)}}
+async function watch(id){try{const d=await api('/resources/'+id+'/video');window.open(d.url,'_blank','noopener')}catch(e){alert(e.message)}}
+async function dl(id){try{const d=await api('/resources/'+id+'/file');const a=document.createElement('a');a.href=d.data;a.download=d.name;document.body.appendChild(a);a.click();a.remove()}catch(e){alert(e.message)}}
+async function del(id){if(!confirm('Delete this post?'))return;try{await api('/resources/'+id,{method:'DELETE'});render()}catch(e){alert(e.message)}}
+document.addEventListener('change',e=>{if(e.target.id==='ty'){const v=e.target.value==='video';$('#vb').hidden=!v;$('#fb').hidden=v}});
+document.addEventListener('submit',async e=>{if(e.target.id!=='rf')return;e.preventDefault();const f=e.target.elements;let file=null;try{file=await readFile(f.file.files[0])}catch(x){return alert(x)}
+ try{await api('/resources',{method:'POST',body:JSON.stringify({subject:f.sub.value,title:f.ttl.value,desc:f.desc.value,type:f.type.value,url:f.url.value,file})});render()}catch(x){alert(x.message)}});
+render();
+</script></body></html>
