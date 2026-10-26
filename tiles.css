@@ -1,9 +1,22 @@
-/* Large equal squares for the home screens */
+/* Photo background for all pages that use tiles.css */
+body{background:linear-gradient(rgba(15,27,61,.78),rgba(15,27,61,.78)),url('rise_pic.jpg') center/cover no-repeat fixed;background-color:#0f1b3d;min-height:100vh}
+main>h2,main>p,main>label,.boxes>p,.back,.back:visited{color:#fff}
+.card{background:#fff;color:#111}
+
+/* Large equal squares: each shows one of the photos */
 .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:24px;max-width:1100px;margin:24px auto}
-.tile{display:flex;flex-direction:column;justify-content:space-between;aspect-ratio:1/1;padding:36px;border-radius:20px;text-decoration:none;color:inherit;border:1px solid rgba(128,128,128,.35);background:rgba(128,128,128,.08);transition:transform .15s,border-color .15s}
-.tile:hover,.tile:focus-visible{transform:translateY(-4px);border-color:currentColor;outline:none}
+.tile{display:flex;flex-direction:column;justify-content:space-between;aspect-ratio:1/1;padding:36px;border-radius:20px;text-decoration:none;color:#fff;border:1px solid rgba(255,255,255,.35);background:linear-gradient(to top,rgba(15,27,61,.92) 25%,rgba(15,27,61,.35)),url('RISE_PIC_2.jpg') center/cover;background-color:#0f1b3d;text-shadow:0 1px 4px rgba(0,0,0,.6);transition:transform .15s,border-color .15s}
+.tile:nth-child(even){background:linear-gradient(to top,rgba(15,27,61,.92) 25%,rgba(15,27,61,.35)),url('rise_pic.jpg') center/cover;background-color:#0f1b3d}
+.tile:hover,.tile:focus-visible{transform:translateY(-4px);border-color:#c9a227;outline:none}
 .tile .ico{font-size:72px;line-height:1}
-.tile h3{margin:0 0 8px;font-size:1.9rem}
-.tile p{margin:0;font-size:1.05rem;opacity:.75}
-.tile .count{font-size:4rem;font-weight:700;line-height:1;margin-bottom:10px}
+.tile h3{margin:0 0 8px;font-size:1.9rem;color:#fff}
+.tile p{margin:0;font-size:1.05rem;color:#fff;opacity:.9}
+.tile .count{font-size:4rem;font-weight:700;line-height:1;margin-bottom:10px;color:#c9a227}
 .back{display:inline-block;margin:0 0 14px}
+
+/* Every list of items on the learner and lecturer pages */
+.boxes{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:24px;margin:20px 0}
+.boxes>.card{aspect-ratio:1/1;overflow:auto;margin:0;padding:28px;border-radius:20px;box-sizing:border-box}
+.boxes>p{grid-column:1/-1}
+.boxes textarea,.boxes input[type=number]{width:100%;box-sizing:border-box}
+@media(max-width:480px){.tile{aspect-ratio:auto;min-height:260px}.boxes>.card{aspect-ratio:auto;min-height:320px}}
