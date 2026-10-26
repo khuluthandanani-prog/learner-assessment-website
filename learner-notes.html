@@ -1,0 +1,11 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Notes &amp; Videos | RISE COLLECTIVE</title><link rel="stylesheet" href="style.css"><link rel="stylesheet" href="tiles.css"></head><body>
+<header class="top"><div class="brand"><span class="logo"></span><div>RISE COLLECTIVE<small>LEARNER PORTAL</small></div></div><div>👤 <span id="who"></span> <button class="btn sm" onclick="logout()">Logout</button></div></header><main><a class="back" href="learner.html">← Home</a><h2>Notes &amp; Videos</h2><div id="list"></div></main>
+<script src="app.js"></script><script>
+const u=guard('learner');
+// EDIT THIS LIST: one line per item. type is "note" or "video".
+const RESOURCES=[
+ {type:'note',title:'Example: Course notes (PDF)',desc:'Replace this with your own note',link:'https://example.com/notes.pdf'},
+ {type:'video',title:'Example: Lesson 1 video',desc:'Replace this with your own video',link:'https://www.youtube.com/watch?v=VIDEO_ID'}
+];
+$('#list').innerHTML=RESOURCES.length?RESOURCES.map(r=>`<div class="card"><div class="row"><h3>${r.type==='video'?'🎥':'📄'} ${esc(r.title)}</h3><span class="tag">${r.type==='video'?'Video':'Notes'}</span></div><p>${esc(r.desc||'')}</p><a class="btn sm" href="${esc(r.link)}" target="_blank" rel="noopener">${r.type==='video'?'Watch':'Open'}</a></div>`).join(''):'<p class="m">No notes or videos yet.</p>';
+</script></body></html>
