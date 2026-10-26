@@ -152,11 +152,26 @@ async function init() {
   }
 }
 
-// Approved admins and lecturers only (learner, tutor and payment management)
+// Approved admins and lecturers (learner and junior tutor management)
 async function admin(req, res, next) {
   try {
     const x = await pool.query(
       "SELECT id,role FROM rise_users WHERE id=$1 AND role IN ('admin','lecturer') AND status='approved'",
+      [req.headers['x-admin-id']]
+    );
+    if (!x.rowCount) return res.status(403).json({ error: 'Admin access denied' });
+    req.user = x.rows[0];
+    next();
+  } catch (e) {
+    next(e);
+  }
+}
+
+// ADMIN ONLY (not lecturers, not tutors): day passes, payments and the sharing report
+async function adminOnly(req, res, next) {
+  try {
+    const x = await pool.query(
+      "SELECT id,role FROM rise_users WHERE id=$1 AND role='admin' AND status='approved'",
       [req.headers['x-admin-id']]
     );
     if (!x.rowCount) return res.status(403).json({ error: 'Admin access denied' });
@@ -657,7 +672,7 @@ app.get('/api/pass/me', anyUser, async (req, res) => {
   }
 });
 
-// A learner asks for a day pass. It starts only after an admin/lecturer confirms the payment.
+// A learner asks for a day pass. It starts only after an admin confirms the payment.
 app.post('/api/pass/request', anyUser, async (req, res) => {
   try {
     if (isStaffRole(req.user.role))
@@ -683,8 +698,8 @@ app.post('/api/pass/request', anyUser, async (req, res) => {
   }
 });
 
-// Admins and lecturers see the requests and confirm or reject them
-app.get('/api/admin/passes', admin, async (req, res) => {
+// ADMIN ONLY: see the day pass requests and confirm or reject them
+app.get('/api/admin/passes', adminOnly, async (req, res) => {
   try {
     const r = await pool.query(`
       SELECT p.id,p.reference,p.status,p.amount,p.requested_at AS "requestedAt",p.expires_at AS "expiresAt",u.name,u.email
@@ -698,7 +713,7 @@ app.get('/api/admin/passes', admin, async (req, res) => {
   }
 });
 
-app.patch('/api/admin/passes/:id', admin, async (req, res) => {
+app.patch('/api/admin/passes/:id', adminOnly, async (req, res) => {
   try {
     const a = req.body.action;
     let r;
@@ -720,9 +735,9 @@ app.patch('/api/admin/passes/:id', admin, async (req, res) => {
   }
 });
 
-// ---- Sharing report (admins and lecturers only) ----
+// ---- Sharing report (ADMIN ONLY) ----
 // Learners who opened videos from many different internet addresses or devices within one pass period
-app.get('/api/admin/sharing', admin, async (req, res) => {
+app.get('/api/admin/sharing', adminOnly, async (req, res) => {
   try {
     const r = await pool.query(`
       SELECT u.id,u.name,u.email,
@@ -747,7 +762,7 @@ app.get('/api/admin/sharing', admin, async (req, res) => {
 });
 
 // The last 60 video openings for one learner
-app.get('/api/admin/sharing/:userId', admin, async (req, res) => {
+app.get('/api/admin/sharing/:userId', adminOnly, async (req, res) => {
   try {
     const r = await pool.query(`
       SELECT l.at,l.ip,l.ua,COALESCE(rs.title,'(deleted video)') AS title
@@ -760,7 +775,7 @@ app.get('/api/admin/sharing/:userId', admin, async (req, res) => {
 });
 
 // Stop all of a learner's active passes at once
-app.patch('/api/admin/sharing/:userId/revoke', admin, async (req, res) => {
+app.patch('/api/admin/sharing/:userId/revoke', adminOnly, async (req, res) => {
   try {
     await pool.query(
       "UPDATE rise_passes SET status='revoked',expires_at=NOW() WHERE user_id=$1 AND status='active'",
