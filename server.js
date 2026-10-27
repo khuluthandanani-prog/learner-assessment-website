@@ -15,7 +15,7 @@ const pool = new Pool({
 });
 
 app.use(cors());
-app.use(express.json({ limit: '3mb' }));
+app.use(express.json({ limit: '8mb' }));
 app.use(express.static(__dirname));
 
 const id = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -62,7 +62,7 @@ async function init() {
   // Remove the variable afterwards, otherwise data is wiped on every restart.
   if (process.env.RESET_DATABASE === 'true') {
     console.log('RESET_DATABASE=true -> wiping all data');
-    await pool.query('DROP TABLE IF EXISTS rise_settings, rise_video_log, rise_passes, rise_resources, rise_submissions, rise_assessments, rise_users CASCADE');
+    await pool.query('DROP TABLE IF EXISTS rise_comp_subs, rise_comp_papers, rise_comp_regs, rise_settings, rise_video_log, rise_passes, rise_resources, rise_submissions, rise_assessments, rise_users CASCADE');
   }
 
   await pool.query(`
@@ -786,9 +786,272 @@ app.patch('/api/admin/sharing/:userId/revoke', adminOnly, async (req, res) => {
   }
 });
 
+// ================= COMPETITIONS (Physics, Accounting, Maths) =================
+const COMP_SUBJECTS = ['Physics', 'Accounting', 'Maths'];
+const COMP_FEE = Number(process.env.COMP_FEE) > 0 ? Number(process.env.COMP_FEE) : 50; // rand, paid to the same account as day passes
+
+async function ensureComp() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS rise_comp_regs(
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES rise_users(id) ON DELETE CASCADE,
+      subject TEXT NOT NULL,
+      school_name TEXT, school_data TEXT,
+      rise_name TEXT, rise_data TEXT,
+      reference TEXT NOT NULL,
+      amount NUMERIC(8,2) NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      decided_at TIMESTAMPTZ,
+      UNIQUE(user_id, subject)
+    );
+    CREATE TABLE IF NOT EXISTS rise_comp_papers(
+      id TEXT PRIMARY KEY,
+      subject TEXT NOT NULL,
+      title TEXT NOT NULL,
+      description TEXT DEFAULT '',
+      total INTEGER NOT NULL,
+      due TIMESTAMPTZ NOT NULL,
+      file_name TEXT, file_data TEXT,
+      created_by TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS rise_comp_subs(
+      id TEXT PRIMARY KEY,
+      paper_id TEXT NOT NULL REFERENCES rise_comp_papers(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES rise_users(id) ON DELETE CASCADE,
+      text TEXT DEFAULT '',
+      file_name TEXT, file_data TEXT,
+      submitted_at TIMESTAMPTZ DEFAULT NOW(),
+      mark INTEGER,
+      feedback TEXT DEFAULT '',
+      marked_at TIMESTAMPTZ,
+      UNIQUE(paper_id, user_id)
+    );
+  `);
+}
+
+// Approved learners only
+async function learnerOnly(req, res, next) {
+  try {
+    const x = await pool.query(
+      "SELECT id,name FROM rise_users WHERE id=$1 AND role='learner' AND status='approved'",
+      [req.headers['x-admin-id']]
+    );
+    if (!x.rowCount) return res.status(403).json({ error: 'Learners only. Please log in again.' });
+    req.user = x.rows[0];
+    next();
+  } catch (e) {
+    next(e);
+  }
+}
+const okFile = f => f && typeof f.name === 'string' && typeof f.data === 'string' && f.data.length > 20;
+
+// ---- Learner: competition account ----
+app.get('/api/comp/me', learnerOnly, async (req, res) => {
+  try {
+    const regs = await pool.query(
+      'SELECT id,subject,status,reference,amount,created_at AS "at" FROM rise_comp_regs WHERE user_id=$1 ORDER BY created_at DESC',
+      [req.user.id]);
+    const papers = await pool.query(
+      `SELECT p.id,p.subject,p.title,p.description AS "desc",p.total,p.due,p.file_name,p.file_data
+       FROM rise_comp_papers p
+       WHERE p.subject IN (SELECT subject FROM rise_comp_regs WHERE user_id=$1 AND status='approved')
+       ORDER BY p.created_at DESC`, [req.user.id]);
+    const subs = await pool.query(
+      'SELECT id,paper_id AS pid,text,file_name,file_data,submitted_at AS "at",mark,feedback FROM rise_comp_subs WHERE user_id=$1',
+      [req.user.id]);
+    res.json({
+      subjects: COMP_SUBJECTS, fee: COMP_FEE, instructions: PAY_INSTRUCTIONS,
+      regs: regs.rows, papers: papers.rows.map(withFile), subs: subs.rows.map(withFile)
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/comp/register', learnerOnly, async (req, res) => {
+  try {
+    const { subject, schoolReport, riseReport } = req.body;
+    if (!COMP_SUBJECTS.includes(subject))
+      return res.status(400).json({ error: 'Choose Physics, Accounting or Maths.' });
+    if (!okFile(schoolReport) || !okFile(riseReport))
+      return res.status(400).json({ error: 'Upload both your school report and your RISE COLLECTIVE marks report.' });
+
+    const ex = await pool.query('SELECT status FROM rise_comp_regs WHERE user_id=$1 AND subject=$2', [req.user.id, subject]);
+    if (ex.rowCount && ex.rows[0].status !== 'rejected')
+      return res.status(409).json({ error: 'You already registered for ' + subject + '.' });
+    if (ex.rowCount) await pool.query('DELETE FROM rise_comp_regs WHERE user_id=$1 AND subject=$2', [req.user.id, subject]);
+
+    const reference = 'COMP-' + Math.random().toString(36).slice(2, 8).toUpperCase();
+    await pool.query(
+      'INSERT INTO rise_comp_regs(id,user_id,subject,school_name,school_data,rise_name,rise_data,reference,amount) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+      [id(), req.user.id, subject, schoolReport.name, schoolReport.data, riseReport.name, riseReport.data, reference, COMP_FEE]
+    );
+    res.json({ ok: true, reference });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/comp/submit', learnerOnly, async (req, res) => {
+  try {
+    const { pid, text, file } = req.body;
+    const p = await pool.query('SELECT subject,due FROM rise_comp_papers WHERE id=$1', [pid]);
+    if (!p.rowCount) return res.status(404).json({ error: 'Paper not found.' });
+    const ok = await pool.query(
+      "SELECT 1 FROM rise_comp_regs WHERE user_id=$1 AND subject=$2 AND status='approved'",
+      [req.user.id, p.rows[0].subject]);
+    if (!ok.rowCount) return res.status(403).json({ error: 'You are not approved for this competition.' });
+    if (new Date() > new Date(p.rows[0].due))
+      return res.status(403).json({ error: 'Submission closed. The deadline has passed.' });
+    const old = await pool.query('SELECT mark FROM rise_comp_subs WHERE paper_id=$1 AND user_id=$2', [pid, req.user.id]);
+    if (old.rowCount && old.rows[0].mark != null)
+      return res.status(403).json({ error: 'This paper has already been marked.' });
+
+    await pool.query(
+      `INSERT INTO rise_comp_subs(id,paper_id,user_id,text,file_name,file_data,submitted_at)
+       VALUES($1,$2,$3,$4,$5,$6,NOW())
+       ON CONFLICT(paper_id,user_id) DO UPDATE
+       SET text=EXCLUDED.text,file_name=EXCLUDED.file_name,file_data=EXCLUDED.file_data,submitted_at=NOW()`,
+      [id(), pid, req.user.id, text || '', file?.name || null, file?.data || null]
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ---- Admin + lecturers: set papers and see marks ONLY ----
+app.get('/api/comp/papers', admin, async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT p.id,p.subject,p.title,p.description AS "desc",p.total,p.due,p.file_name,p.file_data,
+              (SELECT COUNT(*) FROM rise_comp_subs s WHERE s.paper_id=p.id)::int AS subs
+       FROM rise_comp_papers p ORDER BY p.created_at DESC`);
+    res.json({ papers: r.rows.map(withFile), subjects: COMP_SUBJECTS });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/comp/papers', admin, async (req, res) => {
+  try {
+    const { subject, title, desc, total, due, file } = req.body;
+    if (!COMP_SUBJECTS.includes(subject)) return res.status(400).json({ error: 'Invalid subject.' });
+    if (!title || !(+total > 0)) return res.status(400).json({ error: 'Title and total marks are required.' });
+    let dueStr = String(due || '').trim().replace(' ', 'T');
+    if (!/(Z|[+-]\d{2}:?\d{2})$/i.test(dueStr)) {
+      if (/T\d{2}:\d{2}$/.test(dueStr)) dueStr += ':00';
+      dueStr += '+02:00'; // South African time
+    }
+    if (isNaN(new Date(dueStr))) return res.status(400).json({ error: 'Invalid deadline.' });
+    await pool.query(
+      'INSERT INTO rise_comp_papers(id,subject,title,description,total,due,file_name,file_data,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+      [id(), subject, String(title).slice(0, 200), desc || '', +total, dueStr, file?.name || null, file?.data || null, req.user.id]
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.delete('/api/comp/papers/:id', admin, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM rise_comp_papers WHERE id=$1', [req.params.id]);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Marks only: learner name, paper and mark. No emails, reports, payments or submitted work.
+app.get('/api/comp/marks', admin, async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT p.subject,p.title,p.total,u.name,s.mark
+       FROM rise_comp_subs s
+       JOIN rise_comp_papers p ON p.id=s.paper_id
+       JOIN rise_users u ON u.id=s.user_id
+       ORDER BY p.subject,p.title,u.name`);
+    res.json({ marks: r.rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ---- ADMIN ONLY: registrations, approvals and marking ----
+app.get('/api/comp/regs', adminOnly, async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT r.id,r.subject,r.reference,r.amount,r.status,r.created_at AS "at",
+              r.school_name AS "schoolName",r.rise_name AS "riseName",u.name,u.email
+       FROM rise_comp_regs r JOIN rise_users u ON u.id=r.user_id
+       ORDER BY CASE r.status WHEN 'pending' THEN 0 WHEN 'approved' THEN 1 ELSE 2 END, r.created_at DESC
+       LIMIT 500`);
+    res.json({ regs: r.rows, fee: COMP_FEE });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/comp/regs/:id/file/:which', adminOnly, async (req, res) => {
+  try {
+    const w = req.params.which === 'rise' ? 'rise' : 'school';
+    const r = await pool.query(`SELECT ${w}_name AS name,${w}_data AS data FROM rise_comp_regs WHERE id=$1`, [req.params.id]);
+    if (!r.rowCount || !r.rows[0].data) return res.status(404).json({ error: 'File not found.' });
+    res.json(r.rows[0]);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.patch('/api/comp/regs/:id', adminOnly, async (req, res) => {
+  try {
+    const st = { approve: 'approved', reject: 'rejected' }[req.body.action];
+    if (!st) return res.status(400).json({ error: 'Invalid action' });
+    const r = await pool.query('UPDATE rise_comp_regs SET status=$1,decided_at=NOW() WHERE id=$2', [st, req.params.id]);
+    if (!r.rowCount) return res.status(404).json({ error: 'Registration not found.' });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/comp/subs', adminOnly, async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT s.id,s.text,s.file_name,s.file_data,s.submitted_at AS "at",s.mark,s.feedback,
+              u.name,p.title,p.subject,p.total
+       FROM rise_comp_subs s
+       JOIN rise_comp_papers p ON p.id=s.paper_id
+       JOIN rise_users u ON u.id=s.user_id
+       ORDER BY p.subject,p.title,u.name`);
+    res.json({ subs: r.rows.map(withFile) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.patch('/api/comp/subs/:id', adminOnly, async (req, res) => {
+  try {
+    const t = await pool.query(
+      'SELECT p.total FROM rise_comp_subs s JOIN rise_comp_papers p ON p.id=s.paper_id WHERE s.id=$1', [req.params.id]);
+    if (!t.rowCount) return res.status(404).json({ error: 'Submission not found.' });
+    const m = +req.body.mark;
+    if (isNaN(m) || m < 0 || m > t.rows[0].total) return res.status(400).json({ error: 'Mark must be 0–' + t.rows[0].total });
+    await pool.query('UPDATE rise_comp_subs SET mark=$1,feedback=$2,marked_at=NOW() WHERE id=$3',
+      [Math.round(m), req.body.feedback || '', req.params.id]);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 
 init()
+  .then(() => ensureComp())
   .then(() => app.listen(PORT, '0.0.0.0', () => console.log('RISE COLLECTIVE running on ' + PORT)))
   .catch(e => {
     console.error(e);
