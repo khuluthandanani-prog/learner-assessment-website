@@ -24,6 +24,8 @@ function addLinks(){
  const onLec=/lecturer\.html/.test(location.pathname),onLrn=/learner\.html/.test(location.pathname),onAny=onLec||onLrn;
  // Admins and lecturers: registered junior tutors
  if(onLec&&(u.role==='admin'||u.role==='lecturer'))addTile('tutorsLink','tutors.html','👥','Junior Tutors','Registered junior tutors');
+ // Admins and lecturers: learner and tutor applications, red count when some are waiting
+ if(onLec&&(u.role==='admin'||u.role==='lecturer')){const a=addTile('appLink','applications.html','📨','Applications','Learner and tutor applications');if(a)api('/admin/applications').then(d=>{const n=d.applications.filter(x=>x.status==='pending').length;if(n>0){const c=$('.count',a);c.textContent=n;c.hidden=false}}).catch(()=>{})}
  // Admin only: video day pass requests
  if(onLec&&u.role==='admin')addTile('passLink','passes.html','💳','Day Passes','Video day pass requests');
  // Admin only: sharing report, with a red count when someone is flagged
