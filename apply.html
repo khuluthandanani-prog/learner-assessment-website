@@ -1,0 +1,45 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Apply | RISE COLLECTIVE</title><link rel="stylesheet" href="style.css"><link rel="stylesheet" href="tiles.css"></head><body>
+<header class="top"><div class="brand"><span class="logo"></span><div>RISE COLLECTIVE<small>APPLICATIONS</small></div></div><div><a class="btn sm" href="index.html">Login / Register</a></div></header><main>
+<a class="back" href="index.html">← Back</a><h2>Apply to RISE COLLECTIVE</h2>
+<div class="tiles">
+<a class="tile" href="#" data-f="lc"><span class="ico">🎓</span><div><h3>Learner application</h3><p>Apply for a place and get your student number</p></div></a>
+<a class="tile" href="#" data-f="tc"><span class="ico">🧑‍🏫</span><div><h3>Tutor application</h3><p>Apply to become a junior tutor</p></div></a>
+</div>
+
+<div class="card" id="lc" hidden style="max-width:720px;margin:20px auto"><h3>Learner application</h3>
+<form id="lf2"><label>Learner full name</label><input name="nm" required>
+<label>Grade applying for</label><select name="grade"><option>8</option><option>9</option><option>10</option><option>11</option><option>12</option></select>
+<label>Parent / guardian cell number (we send WhatsApp updates here)</label><input name="cell" type="tel" placeholder="082 123 4567" required>
+<label>Learner SA ID number (13 digits)</label><input name="idn" inputmode="numeric" maxlength="13" pattern="[0-9]{13}" required>
+<label>Report from the previous grade (max 1.5MB)</label><input name="rep" type="file" required>
+<p class="m">By applying you agree that RISE COLLECTIVE may keep these details and documents for the application and may contact the parent on WhatsApp.</p>
+<button class="btn">Submit application</button></form></div>
+
+<div class="card" id="tc" hidden style="max-width:720px;margin:20px auto"><h3>Junior tutor application</h3>
+<form id="tf2"><label>Full name</label><input name="nm" required>
+<label>Email (you will register with this email)</label><input name="email" type="email" required>
+<label>Cell number (WhatsApp)</label><input name="cell" type="tel" placeholder="082 123 4567" required>
+<label>SA ID number (13 digits)</label><input name="idn" inputmode="numeric" maxlength="13" pattern="[0-9]{13}" required>
+<label>Matric certificate (max 1.5MB)</label><input name="matric" type="file" required>
+<label>Academic transcript (max 1.5MB)</label><input name="trans" type="file" required>
+<label>Copy of your ID (max 1.5MB)</label><input name="idc" type="file" required>
+<p class="m">By applying you agree that RISE COLLECTIVE may keep these details and documents for the application.</p>
+<button class="btn">Submit application</button></form></div>
+
+<div class="card" id="res" hidden style="max-width:720px;margin:20px auto;text-align:center"></div>
+</main>
+<script src="app.js"></script><script>
+$$('.tile[data-f]').forEach(t=>t.onclick=e=>{e.preventDefault();const k=t.dataset.f;$('#lc').hidden=k!=='lc';$('#tc').hidden=k!=='tc';$('#res').hidden=true;$('#'+k).scrollIntoView({behavior:'smooth'})});
+$('#lf2').onsubmit=async e=>{e.preventDefault();const f=e.target.elements;let rep;try{rep=await readFile(f.rep.files[0])}catch(x){return alert(x)}
+ if(!rep)return alert('Upload the report from the previous grade.');
+ try{const x=await api('/apply/learner',{method:'POST',body:JSON.stringify({name:f.nm.value,grade:f.grade.value,parentCell:f.cell.value,saId:f.idn.value,report:rep})});
+  $('#lc').hidden=true;e.target.reset();const r=$('#res');r.hidden=false;
+  r.innerHTML='<h3>✅ Application received</h3><p>Your student number is</p><div style="font-size:2.2rem;font-weight:700;letter-spacing:2px;color:#111">'+esc(x.studentNumber)+'</div><p><b>Write this number down.</b> When the application is accepted, your parent receives a WhatsApp message. Then press <b>Register</b> on the login page and use this student number.</p><a class="btn" href="index.html?register">Go to Register</a>';
+  r.scrollIntoView({behavior:'smooth'})}catch(x){alert(x.message)}};
+$('#tf2').onsubmit=async e=>{e.preventDefault();const f=e.target.elements;let m,t,i;try{m=await readFile(f.matric.files[0]);t=await readFile(f.trans.files[0]);i=await readFile(f.idc.files[0])}catch(x){return alert(x)}
+ if(!m||!t||!i)return alert('Upload all three documents.');
+ try{await api('/apply/tutor',{method:'POST',body:JSON.stringify({name:f.nm.value,email:f.email.value,cell:f.cell.value,saId:f.idn.value,matric:m,transcript:t,idCopy:i})});
+  $('#tc').hidden=true;e.target.reset();const r=$('#res');r.hidden=false;
+  r.innerHTML='<h3>✅ Application received</h3><p>A lecturer or admin will review your documents. When it is accepted, press <b>Register</b> on the login page, choose <b>Junior Tutor</b> and use the same email you applied with.</p><a class="btn" href="index.html">Back to login</a>';
+  r.scrollIntoView({behavior:'smooth'})}catch(x){alert(x.message)}};
+</script></body></html>
