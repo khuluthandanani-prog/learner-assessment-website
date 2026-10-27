@@ -62,7 +62,8 @@ async function init() {
   // Remove the variable afterwards, otherwise data is wiped on every restart.
   if (process.env.RESET_DATABASE === 'true') {
     console.log('RESET_DATABASE=true -> wiping all data');
-    await pool.query('DROP TABLE IF EXISTS rise_comp_subs, rise_comp_papers, rise_comp_regs, rise_settings, rise_video_log, rise_passes, rise_resources, rise_submissions, rise_assessments, rise_users CASCADE');
+    await pool.query('DROP TABLE IF EXISTS rise_applications, rise_comp_subs, rise_comp_papers, rise_comp_regs, rise_settings, rise_video_log, rise_passes, rise_resources, rise_submissions, rise_assessments, rise_users CASCADE');
+    await pool.query('DROP SEQUENCE IF EXISTS rise_student_seq');
   }
 
   await pool.query(`
@@ -224,9 +225,10 @@ app.get('/api/health', async (req, res) => {
 });
 
 // Register.
-// Learners: pending until approved.
+// Learners: need the student number from an ACCEPTED application, then the account is approved at once.
 // Lecturers: role:'lecturer' + code matching LECTURER_CODE, approved immediately.
-// Junior tutors: role:'tutor' + code matching TUTOR_CODE, then PENDING until an admin/lecturer approves.
+// Junior tutors: the email of an ACCEPTED tutor application (approved at once),
+//   or the old role:'tutor' + TUTOR_CODE route (pending until an admin/lecturer approves).
 // Secret admin: role:'secretadmin' + code matching ADMIN_SETUP_CODE, works for ONE registration only.
 //   New email  -> creates a new admin account.
 //   Existing email + that account's current password -> upgrades that account to admin.
@@ -246,6 +248,8 @@ app.post('/api/auth/register', async (req, res) => {
     let status = 'pending';
     let secret = false;
     let upgradeId = null;
+    let appId = null;
+    let studentNo = null;
 
     if (role === 'lecturer') {
       if (!process.env.LECTURER_CODE || code !== process.env.LECTURER_CODE)
@@ -253,10 +257,18 @@ app.post('/api/auth/register', async (req, res) => {
       newRole = 'lecturer';
       status = 'approved';
     } else if (role === 'tutor') {
-      if (!process.env.TUTOR_CODE || code !== process.env.TUTOR_CODE)
-        return res.status(403).json({ error: 'Invalid tutor registration code.' });
+      const ap = await pool.query(
+        "SELECT id FROM rise_applications WHERE type='tutor' AND status='accepted' AND user_id IS NULL AND LOWER(email)=$1 ORDER BY created_at DESC LIMIT 1",
+        [email]);
+      if (ap.rowCount) {
+        appId = ap.rows[0].id;
+        status = 'approved';
+      } else if (process.env.TUTOR_CODE && code === process.env.TUTOR_CODE) {
+        status = 'pending';
+      } else {
+        return res.status(403).json({ error: 'Your tutor application has not been accepted yet. Apply first, using the same email.' });
+      }
       newRole = 'tutor';
-      status = 'pending';
     } else if (role === 'secretadmin') {
       if (tooManyTries(req.ip))
         return res.status(429).json({ error: 'Too many attempts. Try again later.' });
@@ -277,6 +289,17 @@ app.post('/api/auth/register', async (req, res) => {
       newRole = 'admin';
       status = 'approved';
       secret = true;
+    } else {
+      // Learner: must use the student number from an accepted application
+      const sn = String(req.body.studentNumber || '').replace(/\D/g, '');
+      const ap = sn.length === 10
+        ? await pool.query("SELECT id FROM rise_applications WHERE type='learner' AND student_number=$1 AND status='accepted' AND user_id IS NULL", [sn])
+        : { rowCount: 0 };
+      if (!ap.rowCount)
+        return res.status(403).json({ error: 'Student number not found, or your application has not been accepted yet.' });
+      appId = ap.rows[0].id;
+      studentNo = sn;
+      status = 'approved';
     }
 
     const uid = upgradeId || id();
@@ -286,17 +309,23 @@ app.post('/api/auth/register', async (req, res) => {
         "INSERT INTO rise_settings(key,value) VALUES('secret_admin_used',$1) ON CONFLICT (key) DO NOTHING", [uid]);
       if (!claim.rowCount) return res.status(403).json({ error: 'Invalid or expired admin code.' });
     }
+    if (appId) {
+      // Claim the application so it can only be used for one account
+      const c = await pool.query('UPDATE rise_applications SET user_id=$1 WHERE id=$2 AND user_id IS NULL', [uid, appId]);
+      if (!c.rowCount) return res.status(409).json({ error: 'This application has already been used to register.' });
+    }
     try {
       if (upgradeId) {
         await pool.query("UPDATE rise_users SET role='admin',status='approved' WHERE id=$1", [upgradeId]);
       } else {
         await pool.query(
-          'INSERT INTO rise_users(id,name,email,password_hash,role,status) VALUES($1,$2,$3,$4,$5,$6)',
-          [uid, name.trim(), email, await bcrypt.hash(password, 12), newRole, status]
+          'INSERT INTO rise_users(id,name,email,password_hash,role,status,student_number) VALUES($1,$2,$3,$4,$5,$6,$7)',
+          [uid, name.trim(), email, await bcrypt.hash(password, 12), newRole, status, studentNo]
         );
       }
     } catch (err) {
       if (secret) await pool.query("DELETE FROM rise_settings WHERE key='secret_admin_used'");
+      if (appId) await pool.query('UPDATE rise_applications SET user_id=NULL WHERE id=$1', [appId]);
       throw err;
     }
     res.json({ ok: true, role: newRole, status, upgraded: !!upgradeId });
@@ -1048,10 +1077,241 @@ app.patch('/api/comp/subs/:id', adminOnly, async (req, res) => {
   }
 });
 
+// ================= APPLICATIONS (learners and junior tutors) =================
+const GRADES = ['8', '9', '10', '11', '12'];
+const DOC_KEYS = ['report', 'matric', 'transcript', 'idcopy'];
+
+async function ensureApps() {
+  await pool.query(`
+    CREATE SEQUENCE IF NOT EXISTS rise_student_seq START WITH 1000000001 MINVALUE 1000000001 MAXVALUE 9999999999;
+    CREATE TABLE IF NOT EXISTS rise_applications(
+      id TEXT PRIMARY KEY,
+      type TEXT NOT NULL,
+      name TEXT NOT NULL,
+      email TEXT,
+      cell TEXT NOT NULL,
+      sa_id TEXT NOT NULL,
+      grade TEXT,
+      student_number TEXT UNIQUE,
+      docs JSONB NOT NULL DEFAULT '{}',
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      decided_at TIMESTAMPTZ,
+      decided_by TEXT,
+      wa_status TEXT,
+      wa_at TIMESTAMPTZ,
+      user_id TEXT
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS rise_app_type_said ON rise_applications(type, sa_id);
+    ALTER TABLE rise_users ADD COLUMN IF NOT EXISTS student_number TEXT;
+  `);
+}
+
+// South African ID number: 13 digits and a valid check digit
+function validSaId(s) {
+  if (!/^\d{13}$/.test(s)) return false;
+  let sum = 0;
+  for (let i = 0; i < 13; i++) {
+    let n = +s[i];
+    if (i % 2 === 1) { n *= 2; if (n > 9) n -= 9; }
+    sum += n;
+  }
+  return sum % 10 === 0;
+}
+
+// Turns 082 123 4567 or +27 82 123 4567 into 27821234567 (the format WhatsApp needs), or null
+function waNumber(c) {
+  let d = String(c || '').replace(/\D/g, '');
+  if (d.startsWith('00')) d = d.slice(2);
+  if (d.startsWith('0')) d = '27' + d.slice(1);
+  return /^27\d{9}$/.test(d) ? d : null;
+}
+
+// At most 10 applications per internet address per hour
+const applyHits = new Map();
+function applyLimited(ip) {
+  const r = applyHits.get(ip);
+  if (!r || Date.now() - r.t >= 3600000) { applyHits.set(ip, { n: 1, t: Date.now() }); return false; }
+  r.n++;
+  return r.n > 10;
+}
+
+// WhatsApp Cloud API (Meta). Needs WHATSAPP_TOKEN and WHATSAPP_PHONE_ID in Render.
+// With a template name it sends the approved template; without one it sends plain text.
+async function sendWhatsApp(to, text, tplName, params) {
+  const token = process.env.WHATSAPP_TOKEN, phoneId = process.env.WHATSAPP_PHONE_ID;
+  if (!token || !phoneId) return { sent: false, notSetUp: true };
+  const body = tplName
+    ? {
+        messaging_product: 'whatsapp', to, type: 'template',
+        template: {
+          name: tplName, language: { code: process.env.WHATSAPP_LANG || 'en' },
+          components: [{ type: 'body', parameters: params.map(p => ({ type: 'text', text: String(p) })) }]
+        }
+      }
+    : { messaging_product: 'whatsapp', to, type: 'text', text: { body: text } };
+  try {
+    const r = await fetch('https://graph.facebook.com/v20.0/' + phoneId + '/messages', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) return { sent: false, reason: (d.error && d.error.message) || 'WhatsApp error ' + r.status };
+    return { sent: true };
+  } catch (e) {
+    return { sent: false, reason: e.message };
+  }
+}
+
+async function notifyApplicant(a, link) {
+  const to = waNumber(a.cell);
+  if (!to) return 'failed: invalid cell number';
+  let text, tplName, params;
+  if (a.type === 'learner') {
+    text = 'Good day. The application for ' + a.name + ' to RISE COLLECTIVE has been accepted. Student number: ' + a.student_number + '. Please register at ' + link + ' using this student number.';
+    tplName = process.env.WHATSAPP_TEMPLATE;
+    params = [a.name, a.student_number, link];
+  } else {
+    text = 'Good day ' + a.name + '. Your tutor application to RISE COLLECTIVE has been accepted. Please register at ' + link + ' using the email you applied with.';
+    tplName = process.env.WHATSAPP_TEMPLATE_TUTOR;
+    params = [a.name, link];
+  }
+  const r = await sendWhatsApp(to, text, tplName, params);
+  const st = r.sent ? 'sent' : r.notSetUp ? 'not set up' : 'failed: ' + r.reason;
+  await pool.query('UPDATE rise_applications SET wa_status=$1,wa_at=NOW() WHERE id=$2', [st.slice(0, 300), a.id]);
+  return st;
+}
+
+// ---- Public: apply (no login) ----
+app.post('/api/apply/learner', async (req, res) => {
+  try {
+    if (applyLimited(req.ip)) return res.status(429).json({ error: 'Too many applications from this connection. Try again later.' });
+    const name = String(req.body.name || '').trim().slice(0, 120);
+    const grade = String(req.body.grade || '');
+    const saId = String(req.body.saId || '').replace(/\s/g, '');
+    const cell = String(req.body.parentCell || '').trim();
+    const report = req.body.report;
+    if (name.length < 2) return res.status(400).json({ error: 'Enter the learner\'s full name.' });
+    if (!GRADES.includes(grade)) return res.status(400).json({ error: 'Choose the grade you are applying for.' });
+    if (!waNumber(cell)) return res.status(400).json({ error: 'Enter a valid South African cell number for the parent, for example 082 123 4567.' });
+    if (!validSaId(saId)) return res.status(400).json({ error: 'The SA ID number is not valid. It must be 13 digits.' });
+    if (!okFile(report)) return res.status(400).json({ error: 'Upload the report from the previous grade.' });
+
+    const ex = await pool.query("SELECT status FROM rise_applications WHERE type='learner' AND sa_id=$1", [saId]);
+    if (ex.rowCount && ex.rows[0].status !== 'rejected')
+      return res.status(409).json({ error: 'An application with this ID number already exists. Ask the office for your student number.' });
+    if (ex.rowCount) await pool.query("DELETE FROM rise_applications WHERE type='learner' AND sa_id=$1", [saId]);
+
+    const sn = (await pool.query("SELECT nextval('rise_student_seq')::text AS n")).rows[0].n;
+    await pool.query(
+      "INSERT INTO rise_applications(id,type,name,cell,sa_id,grade,student_number,docs) VALUES($1,'learner',$2,$3,$4,$5,$6,$7)",
+      [id(), name, cell.slice(0, 30), saId, grade, sn, JSON.stringify({ report: { name: report.name, data: report.data } })]
+    );
+    res.json({ ok: true, studentNumber: sn });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/apply/tutor', async (req, res) => {
+  try {
+    if (applyLimited(req.ip)) return res.status(429).json({ error: 'Too many applications from this connection. Try again later.' });
+    const name = String(req.body.name || '').trim().slice(0, 120);
+    const email = String(req.body.email || '').trim().toLowerCase().slice(0, 200);
+    const saId = String(req.body.saId || '').replace(/\s/g, '');
+    const cell = String(req.body.cell || '').trim();
+    const { matric, transcript, idCopy } = req.body;
+    if (name.length < 2) return res.status(400).json({ error: 'Enter your full name.' });
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'Enter a valid email address.' });
+    if (!waNumber(cell)) return res.status(400).json({ error: 'Enter a valid South African cell number, for example 082 123 4567.' });
+    if (!validSaId(saId)) return res.status(400).json({ error: 'The SA ID number is not valid. It must be 13 digits.' });
+    if (!okFile(matric) || !okFile(transcript) || !okFile(idCopy))
+      return res.status(400).json({ error: 'Upload your matric certificate, academic transcript and ID copy.' });
+
+    const used = await pool.query('SELECT 1 FROM rise_users WHERE email=$1', [email]);
+    if (used.rowCount) return res.status(409).json({ error: 'This email is already registered on the portal.' });
+    const ex = await pool.query(
+      "SELECT id,status FROM rise_applications WHERE type='tutor' AND (sa_id=$1 OR LOWER(email)=$2)", [saId, email]);
+    if (ex.rows.some(x => x.status !== 'rejected'))
+      return res.status(409).json({ error: 'A tutor application with this ID number or email already exists.' });
+    for (const x of ex.rows) await pool.query('DELETE FROM rise_applications WHERE id=$1', [x.id]);
+
+    await pool.query(
+      "INSERT INTO rise_applications(id,type,name,email,cell,sa_id,docs) VALUES($1,'tutor',$2,$3,$4,$5,$6)",
+      [id(), name, email, cell.slice(0, 30), saId, JSON.stringify({
+        matric: { name: matric.name, data: matric.data },
+        transcript: { name: transcript.name, data: transcript.data },
+        idcopy: { name: idCopy.name, data: idCopy.data }
+      })]
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ---- Admins and lecturers: review applications ----
+app.get('/api/admin/applications', admin, async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT id,type,name,email,cell,sa_id AS "saId",grade,student_number AS "studentNumber",status,
+              created_at AS "at",wa_status AS "waStatus",(user_id IS NOT NULL) AS registered,
+              ARRAY(SELECT jsonb_object_keys(docs)) AS "docKeys"
+       FROM rise_applications
+       ORDER BY CASE status WHEN 'pending' THEN 0 WHEN 'accepted' THEN 1 ELSE 2 END, created_at DESC
+       LIMIT 500`);
+    res.json({ applications: r.rows.map(x => ({ ...x, waNumber: waNumber(x.cell) })) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/admin/applications/:id/doc/:key', admin, async (req, res) => {
+  try {
+    if (!DOC_KEYS.includes(req.params.key)) return res.status(400).json({ error: 'Invalid document.' });
+    const r = await pool.query('SELECT docs -> $2::text AS d FROM rise_applications WHERE id=$1', [req.params.id, req.params.key]);
+    if (!r.rowCount || !r.rows[0].d) return res.status(404).json({ error: 'Document not found.' });
+    res.json(r.rows[0].d);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.patch('/api/admin/applications/:id', admin, async (req, res) => {
+  try {
+    const action = req.body.action;
+    const q = await pool.query('SELECT * FROM rise_applications WHERE id=$1', [req.params.id]);
+    if (!q.rowCount) return res.status(404).json({ error: 'Application not found.' });
+    const a = q.rows[0];
+    const link = req.protocol + '://' + req.get('host');
+
+    if (action === 'accept') {
+      await pool.query("UPDATE rise_applications SET status='accepted',decided_at=NOW(),decided_by=$2 WHERE id=$1", [a.id, req.user.id]);
+      const wa = await notifyApplicant(a, link);
+      return res.json({ ok: true, whatsapp: wa });
+    }
+    if (action === 'reject') {
+      if (a.user_id) return res.status(409).json({ error: 'This applicant has already registered.' });
+      await pool.query("UPDATE rise_applications SET status='rejected',decided_at=NOW(),decided_by=$2 WHERE id=$1", [a.id, req.user.id]);
+      return res.json({ ok: true });
+    }
+    if (action === 'resend') {
+      if (a.status !== 'accepted') return res.status(409).json({ error: 'Only accepted applications can be notified.' });
+      const wa = await notifyApplicant(a, link);
+      return res.json({ ok: true, whatsapp: wa });
+    }
+    res.status(400).json({ error: 'Invalid action' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 
 init()
   .then(() => ensureComp())
+  .then(() => ensureApps())
   .then(() => app.listen(PORT, '0.0.0.0', () => console.log('RISE COLLECTIVE running on ' + PORT)))
   .catch(e => {
     console.error(e);
