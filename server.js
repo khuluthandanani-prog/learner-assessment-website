@@ -788,7 +788,7 @@ app.patch('/api/admin/sharing/:userId/revoke', adminOnly, async (req, res) => {
 
 // ================= COMPETITIONS (Physics, Accounting, Maths) =================
 const COMP_SUBJECTS = ['Physics', 'Accounting', 'Maths'];
-const COMP_FEE = Number(process.env.COMP_FEE) > 0 ? Number(process.env.COMP_FEE) : 50; // rand, paid to the same account as day passes
+const COMP_FEE = Number(process.env.COMP_FEE) > 0 ? Number(process.env.COMP_FEE) : 150; // rand, paid to the same account as day passes
 
 async function ensureComp() {
   await pool.query(`
