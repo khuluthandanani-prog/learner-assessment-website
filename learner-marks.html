@@ -1,9 +1,22 @@
 <!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>My Marks | RISE COLLECTIVE</title><link rel="stylesheet" href="style.css"><link rel="stylesheet" href="tiles.css"></head><body>
-<header class="top"><div class="brand"><span class="logo"></span><div>RISE COLLECTIVE<small>LEARNER PORTAL</small></div></div><div>👤 <span id="who"></span> <button class="btn sm" onclick="logout()">Logout</button></div></header><main><a class="back" href="learner.html">← Home</a> · <a class="back" href="learner-assessments.html">Assessments</a><h2>My Marks</h2><div id="avg"></div><div id="list"></div></main>
+<header class="top"><div class="brand"><span class="logo"></span><div>RISE COLLECTIVE<small>LEARNER PORTAL</small></div></div><div>👤 <span id="who"></span> <button class="btn sm" onclick="logout()">Logout</button></div></header><main><a class="back" href="learner.html">← Home</a><h2>My Marks</h2>
+<div class="row"><div><label>Subject</label><select id="fs" onchange="show()"></select></div></div>
+<div id="mk"></div></main>
 <script src="app.js"></script><script>
-const u=guard('learner');
-(async()=>{try{const d=await api('/learner/data?userId='+encodeURIComponent(u.id));
-const R=d.submissions.filter(s=>s.mark!=null).map(s=>({s,a:d.assessments.find(a=>a.id===s.aid)})).filter(r=>r.a);
-if(R.length){const got=R.reduce((n,r)=>n+Number(r.s.mark),0),tot=R.reduce((n,r)=>n+Number(r.a.total),0);$('#avg').innerHTML=`<div class="card"><b>Overall: ${got}/${tot}${tot?' ('+Math.round(got/tot*100)+'%)':''}</b></div>`}
-$('#list').innerHTML=R.length?R.map(r=>`<div class="card"><div class="row"><h3>${esc(r.a.title)}</h3><span class="tag ok">${r.s.mark}/${r.a.total}</span></div><p class="m">Submitted ${fmt(r.s.at)} ${fileLink(r.s.file)}</p>${r.s.feedback?`<div class="fb"><b>Feedback:</b> ${esc(r.s.feedback)}</div>`:''}</div>`).join(''):'<p class="m">No marked work yet.</p>'}catch(e){$('#list').innerHTML='<div class="card"><b>Unable to load marks.</b><p>'+esc(e.message)+'</p></div>'}})();
+const u=guard('learner');let ROWS=[];
+function show(){
+ const f=$('#fs').value;
+ const r=ROWS.filter(x=>!f||x.subject===f);
+ const marked=r.filter(x=>x.mark!=null);
+ const avg=marked.length?Math.round(marked.reduce((t,x)=>t+x.mark/x.total*100,0)/marked.length):null;
+ $('#mk').innerHTML=r.length?`<p class="m">${marked.length} of ${r.length} marked${avg==null?'':' · Average '+avg+'%'}</p><div class="card"><div class="table"><table><tr><th>Subject</th><th>Assessment</th><th>Due</th><th>Submitted</th><th>Mark</th><th>Out of</th><th>Percentage</th><th>Feedback</th></tr>${r.map(x=>`<tr><td>${esc(x.subject)}</td><td>${esc(x.title)}</td><td>${fmt(x.due)}</td><td>${x.at?fmt(x.at):(x.closed?'<span class="tag bad">Closed</span>':'<span class="tag">Not submitted</span>')}</td><td>${x.mark!=null?x.mark:(x.at?'<span class="tag">Awaiting mark</span>':'—')}</td><td>${x.total}</td><td>${x.mark!=null?Math.round(x.mark/x.total*100)+'%':'—'}</td><td>${esc(x.feedback||'—')}</td></tr>`).join('')}</table></div></div>`:'<p class="m">No assessments yet.</p>';
+}
+(async()=>{try{
+ const d=await api('/learner/data?userId='+encodeURIComponent(u.id));
+ ROWS=d.assessments.map(a=>{const s=d.submissions.find(x=>x.aid===a.id)||{};return{subject:a.subject||'All subjects',title:a.title,due:a.due,total:a.total,closed:a.closed,at:s.at||null,mark:s.mark==null?null:s.mark,feedback:s.feedback||''}})
+  .sort((p,q)=>p.subject.localeCompare(q.subject)||new Date(q.due)-new Date(p.due));
+ const subs=[...new Set(ROWS.map(x=>x.subject))].sort();
+ $('#fs').innerHTML='<option value="">All subjects</option>'+subs.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('');
+ show();
+}catch(e){$('#mk').innerHTML='<p class="m">'+esc(e.message)+'</p>'}})();
 </script></body></html>
