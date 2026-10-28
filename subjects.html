@@ -1,0 +1,7 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Subjects | RISE COLLECTIVE</title><link rel="stylesheet" href="style.css"><link rel="stylesheet" href="tiles.css"></head><body>
+<header class="top"><div class="brand"><span class="logo"></span><div>RISE COLLECTIVE<small>SUBJECTS</small></div></div><div>👤 <span id="who"></span> <button class="btn sm" onclick="logout()">Logout</button></div></header><main><a class="back" id="bk" href="#">← Home</a><h2>Subjects</h2><div class="tiles" id="list"></div></main>
+<script src="app.js"></script><script>
+const u=session();if(!u)location.href='index.html';else{$('#who').textContent=u.name;$('#bk').href=u.role==='learner'?'learner.html':'lecturer.html'}
+const ICON={Physics:'⚛️',Accounting:'📒',Maths:'➗'};
+api('/subjects').then(d=>{$('#list').innerHTML=d.subjects.length?d.subjects.map(s=>`<a class="tile" href="subject.html?s=${encodeURIComponent(s.name)}"><span class="ico">${ICON[s.name]||'📘'}</span><div><h3>${esc(s.name)}</h3><p>${s.videos} videos · ${s.notes} notes</p></div></a>`).join(''):'<p style="color:#fff">You have no subjects yet. Ask your lecturer to add your subjects.</p>'}).catch(e=>{$('#list').innerHTML='<p style="color:#fff">'+esc(e.message)+'</p>'});
+</script></body></html>
