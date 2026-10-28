@@ -9,10 +9,14 @@
 <div class="card" id="lc" hidden style="max-width:720px;margin:20px auto"><h3>Learner application</h3>
 <form id="lf2"><label>Learner full name</label><input name="nm" required>
 <label>Grade applying for</label><select name="grade"><option>8</option><option>9</option><option>10</option><option>11</option><option>12</option></select>
+<label>Province</label><select name="prov" required><option value="">Choose…</option><option>Eastern Cape</option><option>Free State</option><option>Gauteng</option><option>KwaZulu-Natal</option><option>Limpopo</option><option>Mpumalanga</option><option>Northern Cape</option><option>North West</option><option>Western Cape</option></select>
+<label>District</label><input name="dist" placeholder="e.g. Tshwane South" required>
+<label>School</label><input name="school" required>
+<label>Subjects you are applying for</label><div id="lsub"></div>
 <label>Parent / guardian cell number (we send WhatsApp updates here)</label><input name="cell" type="tel" placeholder="082 123 4567" required>
 <label>Learner SA ID number (13 digits)</label><input name="idn" inputmode="numeric" maxlength="13" pattern="[0-9]{13}" required>
 <label>Report from the previous grade (max 1.5MB)</label><input name="rep" type="file" required>
-<p class="m">By applying you agree that RISE COLLECTIVE may keep these details and documents for the application and may contact the parent on WhatsApp.</p>
+<p class="m">By applying you agree that RISE COLLECTIVE may keep these details and documents for the application and may contact the parent on WhatsApp, including about new notes, videos and assessments in the chosen subjects.</p>
 <button class="btn">Submit application</button></form></div>
 
 <div class="card" id="tc" hidden style="max-width:720px;margin:20px auto"><h3>Junior tutor application</h3>
@@ -20,6 +24,7 @@
 <label>Email (you will register with this email)</label><input name="email" type="email" required>
 <label>Cell number (WhatsApp)</label><input name="cell" type="tel" placeholder="082 123 4567" required>
 <label>SA ID number (13 digits)</label><input name="idn" inputmode="numeric" maxlength="13" pattern="[0-9]{13}" required>
+<label>Subject you are applying for</label><div id="tsub"></div>
 <label>Matric certificate (max 1.5MB)</label><input name="matric" type="file" required>
 <label>Academic transcript (max 1.5MB)</label><input name="trans" type="file" required>
 <label>Copy of your ID (max 1.5MB)</label><input name="idc" type="file" required>
@@ -29,16 +34,20 @@
 <div class="card" id="res" hidden style="max-width:720px;margin:20px auto;text-align:center"></div>
 </main>
 <script src="app.js"></script><script>
+api('/apply/subjects').then(d=>{const h=d.subjects.map(s=>`<label style="font-weight:400"><input type="checkbox" name="subj" value="${esc(s)}" style="width:auto"> ${esc(s)}</label>`).join('');$('#lsub').innerHTML=h;$('#tsub').innerHTML=h}).catch(()=>{});
+const picked=form=>[...form.querySelectorAll('input[name=subj]:checked')].map(x=>x.value);
 $$('.tile[data-f]').forEach(t=>t.onclick=e=>{e.preventDefault();const k=t.dataset.f;$('#lc').hidden=k!=='lc';$('#tc').hidden=k!=='tc';$('#res').hidden=true;$('#'+k).scrollIntoView({behavior:'smooth'})});
-$('#lf2').onsubmit=async e=>{e.preventDefault();const f=e.target.elements;let rep;try{rep=await readFile(f.rep.files[0])}catch(x){return alert(x)}
+$('#lf2').onsubmit=async e=>{e.preventDefault();const f=e.target.elements;const subs=picked(e.target);if(!subs.length)return alert('Choose at least one subject.');
+ let rep;try{rep=await readFile(f.rep.files[0])}catch(x){return alert(x)}
  if(!rep)return alert('Upload the report from the previous grade.');
- try{const x=await api('/apply/learner',{method:'POST',body:JSON.stringify({name:f.nm.value,grade:f.grade.value,parentCell:f.cell.value,saId:f.idn.value,report:rep})});
+ try{const x=await api('/apply/learner',{method:'POST',body:JSON.stringify({name:f.nm.value,grade:f.grade.value,province:f.prov.value,district:f.dist.value,school:f.school.value,subjects:subs,parentCell:f.cell.value,saId:f.idn.value,report:rep})});
   $('#lc').hidden=true;e.target.reset();const r=$('#res');r.hidden=false;
-  r.innerHTML='<h3>✅ Application received</h3><p>Your student number is</p><div style="font-size:2.2rem;font-weight:700;letter-spacing:2px;color:#111">'+esc(x.studentNumber)+'</div><p><b>Write this number down.</b> When the application is accepted, your parent receives a WhatsApp message. Then press <b>Register</b> on the login page and use this student number.</p><a class="btn" href="index.html?register">Go to Register</a>';
+  r.innerHTML='<h3>✅ Application received</h3><p>Your student number is</p><div style="font-size:2.2rem;font-weight:700;letter-spacing:2px;color:#111">'+esc(x.studentNumber)+'</div><p><b>Write this number down.</b> You log in with it. When the application is accepted, your parent receives a WhatsApp message. Then press <b>Register</b> on the login page and use this student number.</p><a class="btn" href="index.html?register">Go to Register</a>';
   r.scrollIntoView({behavior:'smooth'})}catch(x){alert(x.message)}};
-$('#tf2').onsubmit=async e=>{e.preventDefault();const f=e.target.elements;let m,t,i;try{m=await readFile(f.matric.files[0]);t=await readFile(f.trans.files[0]);i=await readFile(f.idc.files[0])}catch(x){return alert(x)}
+$('#tf2').onsubmit=async e=>{e.preventDefault();const f=e.target.elements;const subs=picked(e.target);if(!subs.length)return alert('Choose the subject you are applying for.');
+ let m,t,i;try{m=await readFile(f.matric.files[0]);t=await readFile(f.trans.files[0]);i=await readFile(f.idc.files[0])}catch(x){return alert(x)}
  if(!m||!t||!i)return alert('Upload all three documents.');
- try{await api('/apply/tutor',{method:'POST',body:JSON.stringify({name:f.nm.value,email:f.email.value,cell:f.cell.value,saId:f.idn.value,matric:m,transcript:t,idCopy:i})});
+ try{await api('/apply/tutor',{method:'POST',body:JSON.stringify({name:f.nm.value,email:f.email.value,cell:f.cell.value,saId:f.idn.value,subjects:subs,matric:m,transcript:t,idCopy:i})});
   $('#tc').hidden=true;e.target.reset();const r=$('#res');r.hidden=false;
   r.innerHTML='<h3>✅ Application received</h3><p>A lecturer or admin will review your documents. When it is accepted, press <b>Register</b> on the login page, choose <b>Junior Tutor</b> and use the same email you applied with.</p><a class="btn" href="index.html">Back to login</a>';
   r.scrollIntoView({behavior:'smooth'})}catch(x){alert(x.message)}};
