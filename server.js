@@ -20,14 +20,27 @@ app.use(express.static(__dirname));
 
 const id = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
-// Subjects (change them in Render > Environment with SUBJECTS="Physics,Accounting,Maths")
+// All school subjects except the languages.
+// Change them in Render > Environment with SUBJECTS="Maths,Physics,..." (comma separated).
 const SUBJECTS = process.env.SUBJECTS
   ? process.env.SUBJECTS.split(',').map(s => s.trim()).filter(Boolean)
-  : ['Physics', 'Accounting', 'Maths'];
+  : [
+      'Maths', 'Mathematical Literacy', 'Technical Mathematics',
+      'Physics', 'Physical Sciences', 'Technical Sciences', 'Life Sciences',
+      'Accounting', 'Business Studies', 'Economics',
+      'Geography', 'History',
+      'Information Technology', 'Computer Applications Technology',
+      'Consumer Studies', 'Hospitality Studies', 'Tourism', 'Agricultural Sciences',
+      'Engineering Graphics and Design', 'Civil Technology', 'Electrical Technology', 'Mechanical Technology',
+      'Dramatic Arts', 'Visual Arts', 'Music', 'Religious Studies', 'Life Orientation'
+    ];
 const cleanSubjects = arr => [...new Set((Array.isArray(arr) ? arr : [])
   .map(s => SUBJECTS.find(x => x.toLowerCase() === String(s).trim().toLowerCase()))
   .filter(Boolean))];
-const COMP_SUBJECTS = SUBJECTS;
+// Competitions stay in these subjects (change with COMP_SUBJECTS="Physics,Accounting,Maths")
+const COMP_SUBJECTS = process.env.COMP_SUBJECTS
+  ? process.env.COMP_SUBJECTS.split(',').map(s => s.trim()).filter(Boolean)
+  : ['Physics', 'Accounting', 'Maths'];
 const PROVINCES = ['Eastern Cape', 'Free State', 'Gauteng', 'KwaZulu-Natal', 'Limpopo', 'Mpumalanga', 'Northern Cape', 'North West', 'Western Cape'];
 const isAllAccess = u => ['admin', 'lecturer'].includes(u.role);
 const canSee = (u, sub) => isAllAccess(u) || cleanSubjects(u.subjects).includes(sub);
@@ -881,7 +894,7 @@ app.patch('/api/admin/sharing/:userId/revoke', adminOnly, async (req, res) => {
   }
 });
 
-// ================= COMPETITIONS (same subjects as the rest of the site) =================
+// ================= COMPETITIONS (Physics, Accounting, Maths) =================
 const COMP_FEE = Number(process.env.COMP_FEE) > 0 ? Number(process.env.COMP_FEE) : 150; // rand, paid to the same account as day passes
 
 async function ensureComp() {
@@ -1016,7 +1029,7 @@ app.post('/api/comp/submit', learnerOnly, async (req, res) => {
   }
 });
 
-// ---- Admin + lecturers: set papers and see marks ONLY ----
+// ---- Admin + lecturers: set papers, see submissions, mark and see marks ----
 app.get('/api/comp/papers', admin, async (req, res) => {
   try {
     const r = await pool.query(
@@ -1060,7 +1073,7 @@ app.delete('/api/comp/papers/:id', admin, async (req, res) => {
   }
 });
 
-// Marks only: student number, email, paper and mark. No reports, payments or submitted work.
+// Marks: student number, email, paper and mark.
 app.get('/api/comp/marks', admin, async (req, res) => {
   try {
     const r = await pool.query(
@@ -1070,6 +1083,37 @@ app.get('/api/comp/marks', admin, async (req, res) => {
        JOIN rise_users u ON u.id=s.user_id
        ORDER BY p.subject,p.title,u.student_number`);
     res.json({ marks: r.rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Submitted work to mark (admins AND lecturers)
+app.get('/api/comp/subs', admin, async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT s.id,s.text,s.file_name,s.file_data,s.submitted_at AS "at",s.mark,s.feedback,
+              u.student_number AS "studentNumber",u.email,p.title,p.subject,p.total
+       FROM rise_comp_subs s
+       JOIN rise_comp_papers p ON p.id=s.paper_id
+       JOIN rise_users u ON u.id=s.user_id
+       ORDER BY p.subject,p.title,u.student_number`);
+    res.json({ subs: r.rows.map(withFile) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.patch('/api/comp/subs/:id', admin, async (req, res) => {
+  try {
+    const t = await pool.query(
+      'SELECT p.total FROM rise_comp_subs s JOIN rise_comp_papers p ON p.id=s.paper_id WHERE s.id=$1', [req.params.id]);
+    if (!t.rowCount) return res.status(404).json({ error: 'Submission not found.' });
+    const m = +req.body.mark;
+    if (isNaN(m) || m < 0 || m > t.rows[0].total) return res.status(400).json({ error: 'Mark must be 0–' + t.rows[0].total });
+    await pool.query('UPDATE rise_comp_subs SET mark=$1,feedback=$2,marked_at=NOW() WHERE id=$3',
+      [Math.round(m), req.body.feedback || '', req.params.id]);
+    res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -1131,7 +1175,7 @@ app.get('/api/comp/top/me', learnerOnly, async (req, res) => {
   }
 });
 
-// ---- ADMIN ONLY: registrations, approvals and marking ----
+// ---- ADMIN ONLY: registrations, reports and payments ----
 app.get('/api/comp/regs', adminOnly, async (req, res) => {
   try {
     const r = await pool.query(
@@ -1163,36 +1207,6 @@ app.patch('/api/comp/regs/:id', adminOnly, async (req, res) => {
     if (!st) return res.status(400).json({ error: 'Invalid action' });
     const r = await pool.query('UPDATE rise_comp_regs SET status=$1,decided_at=NOW() WHERE id=$2', [st, req.params.id]);
     if (!r.rowCount) return res.status(404).json({ error: 'Registration not found.' });
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.get('/api/comp/subs', adminOnly, async (req, res) => {
-  try {
-    const r = await pool.query(
-      `SELECT s.id,s.text,s.file_name,s.file_data,s.submitted_at AS "at",s.mark,s.feedback,
-              u.student_number AS "studentNumber",u.email,p.title,p.subject,p.total
-       FROM rise_comp_subs s
-       JOIN rise_comp_papers p ON p.id=s.paper_id
-       JOIN rise_users u ON u.id=s.user_id
-       ORDER BY p.subject,p.title,u.student_number`);
-    res.json({ subs: r.rows.map(withFile) });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.patch('/api/comp/subs/:id', adminOnly, async (req, res) => {
-  try {
-    const t = await pool.query(
-      'SELECT p.total FROM rise_comp_subs s JOIN rise_comp_papers p ON p.id=s.paper_id WHERE s.id=$1', [req.params.id]);
-    if (!t.rowCount) return res.status(404).json({ error: 'Submission not found.' });
-    const m = +req.body.mark;
-    if (isNaN(m) || m < 0 || m > t.rows[0].total) return res.status(400).json({ error: 'Mark must be 0–' + t.rows[0].total });
-    await pool.query('UPDATE rise_comp_subs SET mark=$1,feedback=$2,marked_at=NOW() WHERE id=$3',
-      [Math.round(m), req.body.feedback || '', req.params.id]);
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
