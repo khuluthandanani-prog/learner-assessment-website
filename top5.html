@@ -1,0 +1,14 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Top 5 | RISE COLLECTIVE</title><link rel="stylesheet" href="style.css"><link rel="stylesheet" href="tiles.css"></head><body>
+<header class="top"><div class="brand"><span class="logo"></span><div>RISE COLLECTIVE<small>TOP 5</small></div></div><div>👤 <span id="who"></span> <button class="btn sm" onclick="logout()">Logout</button></div></header><main><a class="back" id="bk" href="#">← Home</a><h2>Top 5 in each district</h2><p id="info"></p><div id="list" class="boxes"></div></main>
+<script src="app.js"></script><script>
+const u=session();if(!u)location.href='index.html';
+if(u&&u.role==='tutor')location.href='lecturer.html';
+const staff=!!u&&['admin','lecturer'].includes(u.role);
+if(u){$('#who').textContent=u.name;$('#bk').href=staff?'lecturer.html':'learner.html'}
+$('#info').textContent=staff?'Ranked by total competition marks in each subject. Equal scores share a rank, so a district can show more than five.':'These are the learners competing with you in your district, ranked by total competition marks.';
+async function render(){try{const d=await api(staff?'/comp/top':'/comp/top/me');const G={};
+ d.rows.forEach(r=>{const k=r.subject+'|'+(r.province||'')+'|'+String(r.district||'').toLowerCase().replace(/\s+/g,' ').trim();(G[k]=G[k]||{subject:r.subject,province:r.province,district:r.district,rows:[]}).rows.push(r)});
+ const keys=Object.keys(G);
+ $('#list').innerHTML=keys.length?keys.map(k=>{const g=G[k];return `<div class="card"><h3>🏆 ${esc(g.subject)}</h3><p class="m">${esc(g.district)} · ${esc(g.province)}</p><div class="table"><table><tr><th>#</th><th>${staff?'Student number':'Learner'}</th>${staff?'<th>Email</th>':''}<th>School</th><th>Score</th></tr>${g.rows.map(r=>`<tr ${r.me?'style="font-weight:700;background:#fff8dc"':''}><td>${r.rank}</td><td>${staff?esc(r.studentNumber||'—'):esc(r.name)+(r.me?' (you)':'')}</td>${staff?`<td>${esc(r.email)}</td>`:''}<td>${esc(r.school||'—')}</td><td>${r.score}</td></tr>`).join('')}</table></div></div>`}).join(''):'<p class="m">'+esc(d.note||'No marks have been uploaded yet, so there is no ranking.')+'</p>'}catch(e){$('#list').innerHTML='<div class="card"><b>Unable to load.</b><p>'+esc(e.message)+'</p></div>'}}
+render();
+</script></body></html>
