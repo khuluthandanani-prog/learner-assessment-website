@@ -2,18 +2,17 @@
 <header class="top"><div class="brand"><span class="logo"></span><div>RISE COLLECTIVE<small>COMPETITION PAPERS</small></div></div><div>👤 <span id="who"></span> <button class="btn sm" onclick="logout()">Logout</button></div></header><main><a class="back" href="lecturer.html">← Home</a><h2>Competition Papers</h2>
 <div class="card"><h3>New competition paper</h3><form id="pf"><label>Subject</label><select name="sub" id="psub"></select><label>Title</label><input name="ttl" required><label>Instructions</label><textarea name="desc"></textarea><div class="row"><div><label>Total marks</label><input name="total" type="number" min="1" value="100" required></div><div><label>Deadline</label><input name="due" type="datetime-local" required></div></div><label>Attach paper (optional, max 1.5MB)</label><input name="file" type="file"><button class="btn">Publish</button></form></div>
 <div id="pl" class="boxes"></div>
-<h2>Competition marks</h2><div id="mk"></div>
-<div id="adm" hidden><h2>Mark submissions (admin)</h2><div id="ms" class="boxes"></div></div></main>
+<h2>Mark submissions</h2><div id="ms" class="boxes"></div>
+<h2>Competition marks</h2><div id="mk"></div></main>
 <script src="app.js"></script><script>
 const u=guard('admin');if(u&&u.role==='tutor')location.href='lecturer.html';
-const isAdmin=!!u&&u.role==='admin';if(isAdmin)$('#adm').hidden=false;
-api('/subjects').then(d=>{$('#psub').innerHTML=d.subjects.map(s=>`<option>${esc(s.name)}</option>`).join('')}).catch(()=>{});
 async function render(){try{const d=await api('/comp/papers');
+ $('#psub').innerHTML=d.subjects.map(s=>`<option>${esc(s)}</option>`).join('');
  $('#pl').innerHTML=d.papers.map(p=>`<div class="card"><div class="row"><h3>${esc(p.title)}</h3><span class="tag">${p.subs} submitted</span></div><p class="m">${esc(p.subject)} · Due ${fmt(p.due)} · ${p.total} marks</p><p>${esc(p.desc)}</p>${fileLink(p.file)} <button class="btn sm ghost" onclick="delP('${p.id}')">Delete</button></div>`).join('')||'<p class="m">No competition papers yet.</p>';
+ const s=await api('/comp/subs');
+ $('#ms').innerHTML=s.subs.map(x=>`<div class="card"><div class="row"><h3>${esc(x.studentNumber||'—')}</h3><span class="tag ${x.mark==null?'':'ok'}">${x.mark==null?'Submitted':'Marked'}</span></div><p class="m">${esc(x.email)}</p><p class="m">${esc(x.subject)} · ${esc(x.title)} · ${fmt(x.at)}</p><p>${esc(x.text).slice(0,200)}</p>${fileLink(x.file)}<label>Mark /${x.total}</label><input type="number" min="0" max="${x.total}" value="${x.mark==null?'':x.mark}" id="m${x.id}"><label>Feedback</label><textarea id="f${x.id}">${esc(x.feedback)}</textarea><button class="btn sm" onclick="save('${x.id}',${x.total})">Save</button></div>`).join('')||'<p class="m">No submissions to mark.</p>';
  const m=await api('/comp/marks');
  $('#mk').innerHTML=m.marks.length?`<div class="card"><div class="table"><table><tr><th>Subject</th><th>Paper</th><th>Student number</th><th>Email</th><th>Mark</th></tr>${m.marks.map(x=>`<tr><td>${esc(x.subject)}</td><td>${esc(x.title)}</td><td>${esc(x.studentNumber||'—')}</td><td>${esc(x.email)}</td><td>${x.mark==null?'<span class="tag">Not marked</span>':x.mark+'/'+x.total}</td></tr>`).join('')}</table></div></div>`:'<p class="m">No submissions yet.</p>';
- if(isAdmin){const s=await api('/comp/subs');
-  $('#ms').innerHTML=s.subs.map(x=>`<div class="card"><div class="row"><h3>${esc(x.studentNumber||'—')}</h3><span class="tag ${x.mark==null?'':'ok'}">${x.mark==null?'Submitted':'Marked'}</span></div><p class="m">${esc(x.email)}</p><p class="m">${esc(x.subject)} · ${esc(x.title)} · ${fmt(x.at)}</p><p>${esc(x.text).slice(0,200)}</p>${fileLink(x.file)}<label>Mark /${x.total}</label><input type="number" min="0" max="${x.total}" value="${x.mark==null?'':x.mark}" id="m${x.id}"><label>Feedback</label><textarea id="f${x.id}">${esc(x.feedback)}</textarea><button class="btn sm" onclick="save('${x.id}',${x.total})">Save</button></div>`).join('')||'<p class="m">No submissions to mark.</p>'}
 }catch(e){alert(e.message)}}
 async function delP(id){if(!confirm('Delete this paper and its submissions?'))return;try{await api('/comp/papers/'+id,{method:'DELETE'});render()}catch(e){alert(e.message)}}
 async function save(id,tot){const m=$('#m'+id).value;if(m===''||+m<0||+m>tot)return alert('Mark must be 0–'+tot);try{await api('/comp/subs/'+id,{method:'PATCH',body:JSON.stringify({mark:+m,feedback:$('#f'+id).value})});alert('Saved');render()}catch(e){alert(e.message)}}
