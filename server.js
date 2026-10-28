@@ -1119,7 +1119,7 @@ app.patch('/api/comp/subs/:id', admin, async (req, res) => {
   }
 });
 
-// ---- Top 5 in each district (ranked by total competition marks per subject) ----
+// ---- Top 5 in each district for the COMPETITIONS (ranked by total competition marks per subject) ----
 const TOP_SQL = `
   WITH sc AS (
     SELECT r.subject, u.id AS uid, u.name, u.email, u.student_number, u.school, u.province, u.district,
@@ -1168,6 +1168,85 @@ app.get('/api/comp/top/me', learnerOnly, async (req, res) => {
       rows: r.rows.map(x => ({
         subject: x.subject, province: x.province, district: x.district, rank: Number(x.rank),
         name: shortName(x.name), school: x.school, score: x.score, papers: x.papers, me: x.uid === req.user.id
+      }))
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ---- Top 5 per district per subject from normal ASSESSMENTS ----
+// Ranked by percentage over the marked assessments of that subject. Add ?assessment=ID to rank on one assessment only.
+// Admins and lecturers: every district, with student numbers and emails.
+app.get('/api/admin/top-assessments', admin, async (req, res) => {
+  try {
+    const aid = req.query.assessment ? String(req.query.assessment) : null;
+    const r = await pool.query(`
+      WITH sc AS (
+        SELECT a.subject, u.id AS uid, u.student_number, u.email, u.school, u.province, u.district,
+               SUM(s.mark)::int AS got, SUM(a.total)::int AS outof, COUNT(*)::int AS n
+        FROM rise_submissions s
+        JOIN rise_assessments a ON a.id=s.assessment_id AND a.subject IS NOT NULL
+        JOIN rise_users u ON u.id=s.user_id AND u.role='learner' AND u.status='approved'
+                         AND u.province IS NOT NULL AND u.district IS NOT NULL
+        WHERE s.mark IS NOT NULL AND ($1::text IS NULL OR a.id=$1::text)
+        GROUP BY a.subject, u.id
+      ), rk AS (
+        SELECT *, ROUND(got*100.0/NULLIF(outof,0),1)::float AS pct,
+               RANK() OVER (PARTITION BY subject, lower(province), lower(regexp_replace(trim(district),'\\s+',' ','g'))
+                            ORDER BY got*1.0/NULLIF(outof,0) DESC NULLS LAST) AS rank
+        FROM sc
+      )
+      SELECT * FROM rk WHERE rank<=5 ORDER BY province, district, subject, rank, student_number`, [aid]);
+    res.json({
+      rows: r.rows.map(x => ({
+        subject: x.subject, province: x.province, district: x.district, rank: Number(x.rank),
+        studentNumber: x.student_number, email: x.email, school: x.school,
+        got: x.got, outof: x.outof, pct: x.pct, n: x.n
+      }))
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Learners: Top 5 of THEIR OWN district only, in the subjects they take (plus their own row if they are lower)
+app.get('/api/top-assessments/me', learnerOnly, async (req, res) => {
+  try {
+    const me = (await pool.query('SELECT province,district,subjects FROM rise_users WHERE id=$1', [req.user.id])).rows[0];
+    if (!me || !me.province || !me.district)
+      return res.json({ rows: [], note: 'Your district is not on file yet, so no ranking can be shown.' });
+    const mine = cleanSubjects(me.subjects);
+    if (!mine.length) return res.json({ rows: [], note: 'You have no subjects yet.' });
+    const aid = req.query.assessment ? String(req.query.assessment) : null;
+    const r = await pool.query(`
+      WITH sc AS (
+        SELECT a.subject, u.id AS uid, u.name, u.school, u.province, u.district,
+               SUM(s.mark)::int AS got, SUM(a.total)::int AS outof, COUNT(*)::int AS n
+        FROM rise_submissions s
+        JOIN rise_assessments a ON a.id=s.assessment_id AND a.subject IS NOT NULL
+        JOIN rise_users u ON u.id=s.user_id AND u.role='learner' AND u.status='approved'
+                         AND u.province IS NOT NULL AND u.district IS NOT NULL
+        WHERE s.mark IS NOT NULL AND ($1::text IS NULL OR a.id=$1::text)
+        GROUP BY a.subject, u.id
+      ), rk AS (
+        SELECT *, ROUND(got*100.0/NULLIF(outof,0),1)::float AS pct,
+               lower(regexp_replace(trim(district),'\\s+',' ','g')) AS dkey,
+               RANK() OVER (PARTITION BY subject, lower(province), lower(regexp_replace(trim(district),'\\s+',' ','g'))
+                            ORDER BY got*1.0/NULLIF(outof,0) DESC NULLS LAST) AS rank
+        FROM sc
+      )
+      SELECT * FROM rk
+      WHERE subject = ANY($2::text[]) AND lower(province)=lower($3)
+        AND dkey=lower(regexp_replace(trim($4),'\\s+',' ','g'))
+        AND (rank<=5 OR uid=$5)
+      ORDER BY subject, rank`, [aid, mine, me.province, me.district, req.user.id]);
+    const shortName = n => { const p = String(n || '').trim().split(/\s+/); return p[0] + (p.length > 1 ? ' ' + p[p.length - 1][0] + '.' : ''); };
+    res.json({
+      province: me.province, district: me.district,
+      rows: r.rows.map(x => ({
+        subject: x.subject, rank: Number(x.rank), name: shortName(x.name), school: x.school,
+        got: x.got, outof: x.outof, pct: x.pct, n: x.n, me: x.uid === req.user.id
       }))
     });
   } catch (e) {
