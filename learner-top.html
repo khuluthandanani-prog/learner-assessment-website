@@ -1,0 +1,21 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Top 5 in my district | RISE COLLECTIVE</title><link rel="stylesheet" href="style.css"><link rel="stylesheet" href="tiles.css"></head><body>
+<header class="top"><div class="brand"><span class="logo"></span><div>RISE COLLECTIVE<small>LEARNER PORTAL</small></div></div><div>👤 <span id="who"></span> <button class="btn sm" onclick="logout()">Logout</button></div></header><main><a class="back" href="learner.html">← Home</a><h2>Top 5 in my district</h2>
+<div class="card"><div class="row"><div><label>Subject</label><select id="fs" onchange="fa();load()"></select></div><div><label>Assessment</label><select id="fa" onchange="load()"></select></div></div>
+<p class="m" id="nt"></p><div id="tt"></div></div></main>
+<script src="app.js"></script><script>
+const u=guard('learner');let AS=[];
+function fa(){const s=$('#fs').value;$('#fa').innerHTML='<option value="">All assessments (combined)</option>'+AS.filter(a=>a.subject&&(!s||a.subject===s)).map(a=>`<option value="${a.id}">${esc(a.subject+' – '+a.title)}</option>`).join('')}
+async function load(){try{
+ const aid=$('#fa').value;
+ const d=await api('/top-assessments/me'+(aid?'?assessment='+encodeURIComponent(aid):''));
+ const s=$('#fs').value;const rows=d.rows.filter(x=>!s||x.subject===s);
+ $('#nt').textContent=d.note||(d.district?'Your district: '+d.district+', '+d.province+'. Ranked by percentage over the marked assessments.':'');
+ $('#tt').innerHTML=rows.length?`<div class="table"><table><tr><th>Subject</th><th>Rank</th><th>Learner</th><th>School</th><th>Marks</th><th>Percentage</th><th>Assessments marked</th></tr>${rows.map(x=>`<tr${x.me?' style="background:rgba(128,128,128,.15)"':''}><td>${esc(x.subject)}</td><td><b>${x.rank}</b></td><td>${esc(x.name)} ${x.me?'<span class="tag ok">You</span>':''}</td><td>${esc(x.school||'—')}</td><td>${x.got}/${x.outof}</td><td>${x.pct==null?'—':x.pct+'%'}</td><td>${x.n}</td></tr>`).join('')}</table></div>`:'<p class="m">No rankings yet. They appear once assessments in your subjects have been marked.</p>';
+}catch(e){$('#tt').innerHTML='<p class="m">'+esc(e.message)+'</p>'}}
+(async()=>{try{
+ const d=await api('/learner/data?userId='+encodeURIComponent(u.id));AS=d.assessments;
+ const subs=[...new Set(AS.map(a=>a.subject).filter(Boolean))].sort();
+ $('#fs').innerHTML='<option value="">All my subjects</option>'+subs.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('');
+ fa();load();
+}catch(e){$('#tt').innerHTML='<p class="m">'+esc(e.message)+'</p>'}})();
+</script></body></html>
