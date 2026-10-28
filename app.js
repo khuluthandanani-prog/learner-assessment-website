@@ -22,19 +22,22 @@ function addTile(id,href,ico,title,desc){const box=$('.tiles');if(!box||$('#'+id
 function addLinks(){
  const u=session();if(!u)return;
  const onLec=/lecturer\.html/.test(location.pathname),onLrn=/learner\.html/.test(location.pathname),onAny=onLec||onLrn;
+ const mgr=u.role==='admin'||u.role==='lecturer';
  // Admins and lecturers: registered junior tutors
- if(onLec&&(u.role==='admin'||u.role==='lecturer'))addTile('tutorsLink','tutors.html','👥','Junior Tutors','Registered junior tutors');
+ if(onLec&&mgr)addTile('tutorsLink','tutors.html','👥','Junior Tutors','Registered junior tutors');
  // Admins and lecturers: learner and tutor applications, red count when some are waiting
- if(onLec&&(u.role==='admin'||u.role==='lecturer')){const a=addTile('appLink','applications.html','📨','Applications','Learner and tutor applications');if(a)api('/admin/applications').then(d=>{const n=d.applications.filter(x=>x.status==='pending').length;if(n>0){const c=$('.count',a);c.textContent=n;c.hidden=false}}).catch(()=>{})}
+ if(onLec&&mgr){const a=addTile('appLink','applications.html','📨','Applications','Learner and tutor applications');if(a)api('/admin/applications').then(d=>{const n=d.applications.filter(x=>x.status==='pending').length;if(n>0){const c=$('.count',a);c.textContent=n;c.hidden=false}}).catch(()=>{})}
  // Admin only: video day pass requests
  if(onLec&&u.role==='admin')addTile('passLink','passes.html','💳','Day Passes','Video day pass requests');
  // Admin only: sharing report, with a red count when someone is flagged
  if(onLec&&u.role==='admin'){const a=addTile('shareLink','sharing.html','🚩','Sharing Report','Accounts flagged for sharing');if(a)api('/admin/sharing').then(d=>{if(d.flagged>0){const c=$('.count',a);c.textContent=d.flagged;c.hidden=false;a.style.borderColor='#c0392b'}}).catch(()=>{})}
- // Everyone logged in: notes and videos
- if(onAny)addTile('resLink','resources.html','📚','Notes & Videos','Study material');
+ // Everyone logged in: subjects (notes and videos for each subject)
+ if(onAny)addTile('resLink','subjects.html','📚','Subjects','Notes and videos for each subject');
  // Competitions: learners register and write; admin and lecturers set papers and see marks
- if(onLrn)addTile('compLink','comp.html','🏅','Competitions','Physics, Accounting & Maths');
- if(onLec&&(u.role==='admin'||u.role==='lecturer'))addTile('compStaffLink','comp-staff.html','🏅','Competition Papers','Set papers and see marks');
+ if(onLrn)addTile('compLink','comp.html','🏅','Competitions','Register and write competition papers');
+ if(onLec&&mgr)addTile('compStaffLink','comp-staff.html','🏅','Competition Papers','Set papers and see marks');
+ // Top 5 in each district (learners see only their own district)
+ if(onLrn||(onLec&&mgr))addTile('topLink','top5.html','🏆','Top 5','Best learners in each district');
  // Admin only: approve competition registrations, red count when some are waiting
  if(onLec&&u.role==='admin'){const a=addTile('compRegLink','comp-regs.html','📋','Competition Registrations','Approve or reject entries');if(a)api('/comp/regs').then(d=>{const n=d.regs.filter(r=>r.status==='pending').length;if(n>0){const c=$('.count',a);c.textContent=n;c.hidden=false}}).catch(()=>{})}
  hideTutorTabs();
