@@ -1,0 +1,28 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Subject | RISE COLLECTIVE</title><link rel="stylesheet" href="style.css"><link rel="stylesheet" href="tiles.css"></head><body>
+<header class="top"><div class="brand"><span class="logo"></span><div>RISE COLLECTIVE<small>SUBJECT</small></div></div><div>👤 <span id="who"></span> <button class="btn sm" onclick="logout()">Logout</button></div></header><main><a class="back" href="subjects.html">← Subjects</a><h2 id="ttl"></h2>
+<div id="top" class="boxes"></div><h2>🎥 Videos</h2><div id="vl" class="boxes"></div><h2>📄 Notes</h2><div id="nl" class="boxes"></div></main>
+<script src="app.js"></script><script>
+const u=session();if(!u)location.href='index.html';else $('#who').textContent=u.name;
+const S=new URLSearchParams(location.search).get('s')||'';$('#ttl').textContent=S;document.title=S+' | RISE COLLECTIVE';
+const staff=!!u&&u.role!=='learner';
+function formBox(){return `<div class="card"><h3>➕ Add to ${esc(S)}</h3><form id="rf"><label>Title</label><input name="ttl" required><label>Type</label><select name="type" id="ty"><option value="note">Notes</option><option value="video">Video link</option></select><label>Description / notes text</label><textarea name="desc"></textarea><div id="vb" hidden><label>Video link</label><input name="url" placeholder="https://"></div><div id="fb"><label>Attach file (max 1.5MB)</label><input name="file" type="file"></div><button class="btn">Post</button><p class="m">Parents of learners in this subject are told on WhatsApp.</p></form></div>`}
+async function passBox(){try{const p=await api('/pass/me');let b;
+ if(p.active)b=`<span class="tag ok">Day pass active</span><p class="m">Videos unlocked until ${fmt(p.expiresAt)}</p>`;
+ else if(p.pending)b=`<span class="tag warn">Waiting for payment confirmation</span><p>Pay R${p.price} and use this reference:</p><p><b>${esc(p.pending.reference)}</b></p><p style="white-space:pre-wrap">${esc(p.instructions)}</p><p class="m">An admin activates your pass once the payment is confirmed.</p>`;
+ else b=`<p>Videos need a day pass: R${p.price} for ${p.hours} hours. Notes are free.</p><button class="btn" onclick="getPass()">Get day pass</button>`;
+ return `<div class="card"><h3>💳 Day pass</h3>${b}</div>`}catch(e){return ''}}
+const card=r=>{const mine=u.role!=='tutor'||r.createdBy===u.id;return `<div class="card"><div class="row"><h3>${r.type==='video'?'🎥':'📄'} ${esc(r.title)}</h3></div><p class="m">${esc(r.by||'')} · ${fmt(r.at)}</p><p>${esc(r.desc)}</p>${r.type==='video'?`<button class="btn sm" onclick="watch('${r.id}')">▶ Watch</button>`:(r.fileName?`<button class="btn sm" onclick="dl('${r.id}')">⬇ ${esc(r.fileName)}</button>`:'')}${staff&&mine?` <button class="btn sm ghost" onclick="del('${r.id}')">Delete</button>`:''}</div>`};
+async function render(){try{const d=await api('/resources?subject='+encodeURIComponent(S));
+ $('#top').innerHTML=d.canPost?formBox():(staff?'':await passBox());
+ $('#vl').innerHTML=d.resources.filter(r=>r.type==='video').map(card).join('')||'<p class="m">No videos yet.</p>';
+ $('#nl').innerHTML=d.resources.filter(r=>r.type==='note').map(card).join('')||'<p class="m">No notes yet.</p>'}
+ catch(e){$('#top').innerHTML='<div class="card"><b>Unable to open this subject.</b><p>'+esc(e.message)+'</p></div>'}}
+async function getPass(){try{await api('/pass/request',{method:'POST',body:'{}'});render()}catch(e){alert(e.message)}}
+async function watch(id){try{const d=await api('/resources/'+id+'/video');window.open(d.url,'_blank','noopener')}catch(e){alert(e.message)}}
+async function dl(id){try{const d=await api('/resources/'+id+'/file');const a=document.createElement('a');a.href=d.data;a.download=d.name;document.body.appendChild(a);a.click();a.remove()}catch(e){alert(e.message)}}
+async function del(id){if(!confirm('Delete this post?'))return;try{await api('/resources/'+id,{method:'DELETE'});render()}catch(e){alert(e.message)}}
+document.addEventListener('change',e=>{if(e.target.id==='ty'){const v=e.target.value==='video';$('#vb').hidden=!v;$('#fb').hidden=v}});
+document.addEventListener('submit',async e=>{if(e.target.id!=='rf')return;e.preventDefault();const f=e.target.elements;let file=null;try{file=await readFile(f.file.files[0])}catch(x){return alert(x)}
+ try{await api('/resources',{method:'POST',body:JSON.stringify({subject:S,title:f.ttl.value,desc:f.desc.value,type:f.type.value,url:f.url.value,file})});render()}catch(x){alert(x.message)}});
+render();
+</script></body></html>
