@@ -19,8 +19,7 @@ function showMs(){
 async function render(){try{const d=await api('/comp/papers');
  $('#psub').innerHTML=d.subjects.map(s=>`<option>${esc(s)}</option>`).join('');
  $('#pl').innerHTML=d.papers.map(p=>`<div class="card"><div class="row"><h3>${esc(p.title)}</h3><span class="tag">${p.subs} submitted</span></div><p class="m">${esc(p.subject)} · Due ${fmt(p.due)} · ${p.total} marks</p><p>${esc(p.desc)}</p>${fileLink(p.file)} <button class="btn sm ghost" onclick="delP('${p.id}')">Delete</button></div>`).join('')||'<p class="m">No competition papers yet.</p>';
- const s=await api('/comp/subs');
- SUBS=s.subs;showMs();
+ const s=await api('/comp/subs');SUBS=s.subs;showMs();
  const m=await api('/comp/marks');
  $('#mk').innerHTML=m.marks.length?`<div class="card"><div class="table"><table><tr><th>Subject</th><th>Paper</th><th>Student number</th><th>Email</th><th>Mark</th></tr>${m.marks.map(x=>`<tr><td>${esc(x.subject)}</td><td>${esc(x.title)}</td><td>${esc(x.studentNumber||'—')}</td><td>${esc(x.email)}</td><td>${x.mark==null?'<span class="tag">Not marked</span>':x.mark+'/'+x.total}</td></tr>`).join('')}</table></div></div>`:'<p class="m">No submissions yet.</p>';
 }catch(e){alert(e.message)}}
