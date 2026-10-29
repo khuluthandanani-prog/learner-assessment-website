@@ -62,6 +62,10 @@ const PAY_INSTRUCTIONS = PAYENV.PAY_INSTRUCTIONS || [
 const SHARE_MAX_IPS = parseInt(process.env.SHARE_MAX_IPS, 10) > 0 ? parseInt(process.env.SHARE_MAX_IPS, 10) : 3;
 const SHARE_MAX_DEVICES = parseInt(process.env.SHARE_MAX_DEVICES, 10) > 0 ? parseInt(process.env.SHARE_MAX_DEVICES, 10) : 3;
 
+// Learner applications are accepted automatically this many hours after they are submitted
+// (change with AUTO_ACCEPT_HOURS in Render > Environment)
+const AUTO_ACCEPT_HOURS = Number(process.env.AUTO_ACCEPT_HOURS) > 0 ? Number(process.env.AUTO_ACCEPT_HOURS) : 24;
+
 // ---- One-time secret admin registration ----
 // Set ADMIN_SETUP_CODE in Render. The first person to register with it becomes an admin,
 // after which the option disappears from the form and the server refuses it for good.
@@ -79,6 +83,38 @@ async function secretAdminAvailable() {
   if (!process.env.ADMIN_SETUP_CODE) return false;
   const u = await pool.query("SELECT 1 FROM rise_settings WHERE key='secret_admin_used'");
   return !u.rowCount;
+}
+
+// ---- Application open/close switches (admin only can change them) ----
+// Stored in rise_settings as apply_closed_learner / apply_closed_tutor. No row = open.
+async function applyStatus() {
+  const r = await pool.query("SELECT key FROM rise_settings WHERE key IN ('apply_closed_learner','apply_closed_tutor')");
+  const closed = new Set(r.rows.map(x => x.key));
+  return { learner: !closed.has('apply_closed_learner'), tutor: !closed.has('apply_closed_tutor') };
+}
+const CLOSED_MSG = 'Applications are closed.';
+
+// ---- Random 10-digit student numbers (not in order, so one cannot guess another learner's) ----
+async function newStudentNumber() {
+  for (let i = 0; i < 40; i++) {
+    const n = String(crypto.randomInt(1000000000, 10000000000));
+    const t = await pool.query(
+      'SELECT 1 FROM rise_applications WHERE student_number=$1 UNION ALL SELECT 1 FROM rise_users WHERE student_number=$1', [n]);
+    if (!t.rowCount) return n;
+  }
+  throw Error('Could not create a student number. Please try again.');
+}
+
+// ---- Automatic acceptance of learners after AUTO_ACCEPT_HOURS ----
+async function autoAcceptLearners() {
+  try {
+    await pool.query(
+      `UPDATE rise_applications SET status='accepted',decided_at=NOW(),decided_by='auto'
+       WHERE type='learner' AND status='pending' AND created_at <= NOW() - ($1::float * INTERVAL '1 hour')`,
+      [AUTO_ACCEPT_HOURS]);
+  } catch (e) {
+    console.error('autoAcceptLearners:', e.message);
+  }
 }
 
 async function init() {
@@ -194,7 +230,7 @@ async function admin(req, res, next) {
   }
 }
 
-// ADMIN ONLY (not lecturers, not tutors): day passes, payments and the sharing report
+// ADMIN ONLY (not lecturers, not tutors): day passes, payments, the sharing report and opening/closing applications
 async function adminOnly(req, res, next) {
   try {
     const x = await pool.query(
@@ -318,13 +354,15 @@ app.post('/api/auth/register', async (req, res) => {
       status = 'approved';
       secret = true;
     } else {
-      // Learner: must use the student number from an accepted application
+      // Learner: must use the student number from an accepted application.
+      // Make sure any application older than the waiting period is accepted first.
+      await autoAcceptLearners();
       const sn = String(req.body.studentNumber || '').replace(/\D/g, '');
       const ap = sn.length === 10
         ? await pool.query("SELECT id,province,district,school,cell,subjects FROM rise_applications WHERE type='learner' AND student_number=$1 AND status='accepted' AND user_id IS NULL", [sn])
         : { rowCount: 0 };
       if (!ap.rowCount)
-        return res.status(403).json({ error: 'Student number not found, or your application has not been accepted yet.' });
+        return res.status(403).json({ error: 'Student number not found, or your application has not been accepted yet. Applications are accepted automatically ' + AUTO_ACCEPT_HOURS + ' hours after you apply.' });
       const a = ap.rows[0];
       appId = a.id;
       studentNo = sn;
@@ -497,7 +535,6 @@ app.post('/api/assessments', staff, async (req, res) => {
       [x, title, desc || '', +total, dueStr, file?.name || null, file?.data || null, req.user.id, subject]
     );
     res.json({ ok: true, id: x });
-    notifyParents(subject, 'assessment', title, req.protocol + '://' + req.get('host')).catch(() => {});
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -735,7 +772,6 @@ app.post('/api/resources', staff, async (req, res) => {
        type === 'note' ? (file?.name || null) : null, type === 'note' ? (file?.data || null) : null, req.user.id]
     );
     res.json({ ok: true, id: x });
-    notifyParents(sub, type === 'video' ? 'video' : 'notes', ttl, req.protocol + '://' + req.get('host')).catch(() => {});
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -1058,7 +1094,6 @@ app.post('/api/comp/papers', admin, async (req, res) => {
       [id(), subject, String(title).slice(0, 200), desc || '', +total, dueStr, file?.name || null, file?.data || null, req.user.id]
     );
     res.json({ ok: true });
-    notifyParents(subject, 'competition paper', title, req.protocol + '://' + req.get('host'), true).catch(() => {});
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -1343,7 +1378,7 @@ function validSaId(s) {
   return sum % 10 === 0;
 }
 
-// Turns 082 123 4567 or +27 82 123 4567 into 27821234567 (the format WhatsApp needs), or null
+// Checks a South African cell number: 082 123 4567 or +27 82 123 4567 gives 27821234567, anything else gives null
 function waNumber(c) {
   let d = String(c || '').replace(/\D/g, '');
   if (d.startsWith('00')) d = d.slice(2);
@@ -1360,87 +1395,23 @@ function applyLimited(ip) {
   return r.n > 10;
 }
 
-// WhatsApp Cloud API (Meta). Needs WHATSAPP_TOKEN and WHATSAPP_PHONE_ID in Render.
-// With a template name it sends the approved template; without one it sends plain text.
-async function sendWhatsApp(to, text, tplName, params) {
-  const token = process.env.WHATSAPP_TOKEN, phoneId = process.env.WHATSAPP_PHONE_ID;
-  if (!token || !phoneId) return { sent: false, notSetUp: true };
-  const body = tplName
-    ? {
-        messaging_product: 'whatsapp', to, type: 'template',
-        template: {
-          name: tplName, language: { code: process.env.WHATSAPP_LANG || 'en' },
-          components: [{ type: 'body', parameters: params.map(p => ({ type: 'text', text: String(p) })) }]
-        }
-      }
-    : { messaging_product: 'whatsapp', to, type: 'text', text: { body: text } };
-  try {
-    const r = await fetch('https://graph.facebook.com/v20.0/' + phoneId + '/messages', {
-      method: 'POST',
-      headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
-    const d = await r.json().catch(() => ({}));
-    if (!r.ok) return { sent: false, reason: (d.error && d.error.message) || 'WhatsApp error ' + r.status };
-    return { sent: true };
-  } catch (e) {
-    return { sent: false, reason: e.message };
-  }
-}
-
-async function notifyApplicant(a, link) {
-  const to = waNumber(a.cell);
-  if (!to) return 'failed: invalid cell number';
-  let text, tplName, params;
-  if (a.type === 'learner') {
-    text = 'Good day. The application for ' + a.name + ' to RISE COLLECTIVE has been accepted. Student number: ' + a.student_number + '. Please register at ' + link + ' using this student number.';
-    tplName = process.env.WHATSAPP_TEMPLATE;
-    params = [a.name, a.student_number, link];
-  } else {
-    text = 'Good day ' + a.name + '. Your tutor application to RISE COLLECTIVE has been accepted. Please register at ' + link + ' using the email you applied with.';
-    tplName = process.env.WHATSAPP_TEMPLATE_TUTOR;
-    params = [a.name, link];
-  }
-  const r = await sendWhatsApp(to, text, tplName, params);
-  const st = r.sent ? 'sent' : r.notSetUp ? 'not set up' : 'failed: ' + r.reason;
-  await pool.query('UPDATE rise_applications SET wa_status=$1,wa_at=NOW() WHERE id=$2', [st.slice(0, 300), a.id]);
-  return st;
-}
-
-// Tells the parents of learners in a subject (or in a competition) that something new was added.
-// Runs in the background after the upload has already been saved.
-async function notifyParents(subject, what, title, link, compOnly) {
-  try {
-    const q = compOnly
-      ? await pool.query(
-          `SELECT u.name,u.parent_cell FROM rise_users u
-           JOIN rise_comp_regs r ON r.user_id=u.id AND r.subject=$1 AND r.status='approved'
-           WHERE u.role='learner' AND u.status='approved' AND u.parent_cell IS NOT NULL`, [subject])
-      : await pool.query(
-          "SELECT name,parent_cell FROM rise_users WHERE role='learner' AND status='approved' AND parent_cell IS NOT NULL AND $1 = ANY(subjects)", [subject]);
-    let sent = 0, failed = 0, note = '';
-    const t = String(title || '').slice(0, 80);
-    for (const u of q.rows) {
-      const to = waNumber(u.parent_cell);
-      if (!to) { failed++; continue; }
-      const text = 'Good day. A new ' + what + ' in ' + subject + ' has been added for ' + u.name + ': ' + t + '. Log in at ' + link + ' to see it.';
-      const r = await sendWhatsApp(to, text, process.env.WHATSAPP_TEMPLATE_UPDATE, [u.name, what, subject, t, link]);
-      if (r.notSetUp) { note = 'WhatsApp not set up'; break; }
-      if (r.sent) sent++; else { failed++; note = r.reason || note; }
-    }
-    await pool.query(
-      'INSERT INTO rise_notify_log(id,subject,what,title,recipients,sent,failed,note) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',
-      [id(), subject, what, t, q.rowCount, sent, failed, String(note).slice(0, 300)]);
-  } catch (e) {
-    console.error('notifyParents:', e.message);
-  }
-}
-
 // ---- Public: apply (no login) ----
 app.get('/api/apply/subjects', (req, res) => res.json({ subjects: SUBJECTS, provinces: PROVINCES }));
 
+// Public: are applications open? The apply pages call this before showing the form.
+app.get('/api/apply/status', async (req, res) => {
+  try {
+    const s = await applyStatus();
+    res.json({ ...s, autoAcceptHours: AUTO_ACCEPT_HOURS });
+  } catch (e) {
+    res.json({ learner: true, tutor: true, autoAcceptHours: AUTO_ACCEPT_HOURS });
+  }
+});
+
 app.post('/api/apply/learner', async (req, res) => {
   try {
+    if (!(await applyStatus()).learner)
+      return res.status(403).json({ error: CLOSED_MSG, closed: true });
     if (applyLimited(req.ip)) return res.status(429).json({ error: 'Too many applications from this connection. Try again later.' });
     const name = String(req.body.name || '').trim().slice(0, 120);
     const grade = String(req.body.grade || '');
@@ -1466,12 +1437,13 @@ app.post('/api/apply/learner', async (req, res) => {
       return res.status(409).json({ error: 'An application with this ID number already exists. Ask the office for your student number.' });
     if (ex.rowCount) await pool.query("DELETE FROM rise_applications WHERE type='learner' AND sa_id=$1", [saId]);
 
-    const sn = (await pool.query("SELECT nextval('rise_student_seq')::text AS n")).rows[0].n;
+    // Random 10-digit student number (shown to the learner on screen; accepted automatically later)
+    const sn = await newStudentNumber();
     await pool.query(
       "INSERT INTO rise_applications(id,type,name,cell,sa_id,grade,student_number,docs,province,district,school,subjects) VALUES($1,'learner',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
       [id(), name, cell.slice(0, 30), saId, grade, sn, JSON.stringify({ report: { name: report.name, data: report.data } }), province, district, school, subjects]
     );
-    res.json({ ok: true, studentNumber: sn });
+    res.json({ ok: true, studentNumber: sn, autoAcceptHours: AUTO_ACCEPT_HOURS });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -1479,6 +1451,8 @@ app.post('/api/apply/learner', async (req, res) => {
 
 app.post('/api/apply/tutor', async (req, res) => {
   try {
+    if (!(await applyStatus()).tutor)
+      return res.status(403).json({ error: CLOSED_MSG, closed: true });
     if (applyLimited(req.ip)) return res.status(429).json({ error: 'Too many applications from this connection. Try again later.' });
     const name = String(req.body.name || '').trim().slice(0, 120);
     const email = String(req.body.email || '').trim().toLowerCase().slice(0, 200);
@@ -1516,18 +1490,45 @@ app.post('/api/apply/tutor', async (req, res) => {
   }
 });
 
+// ---- ADMIN ONLY: open or close applications ----
+app.get('/api/admin/apply-status', adminOnly, async (req, res) => {
+  try {
+    res.json({ ...(await applyStatus()), autoAcceptHours: AUTO_ACCEPT_HOURS });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Body: { type: 'learner' | 'tutor', open: true | false }
+app.patch('/api/admin/apply-status', adminOnly, async (req, res) => {
+  try {
+    const type = req.body.type;
+    if (!['learner', 'tutor'].includes(type)) return res.status(400).json({ error: 'Invalid type.' });
+    const key = 'apply_closed_' + type;
+    if (req.body.open) await pool.query('DELETE FROM rise_settings WHERE key=$1', [key]);
+    else await pool.query("INSERT INTO rise_settings(key,value) VALUES($1,'1') ON CONFLICT (key) DO NOTHING", [key]);
+    res.json({ ok: true, ...(await applyStatus()) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ---- Admins and lecturers: review applications ----
 app.get('/api/admin/applications', admin, async (req, res) => {
   try {
+    await autoAcceptLearners();
     const r = await pool.query(
       `SELECT id,type,name,email,cell,sa_id AS "saId",grade,student_number AS "studentNumber",status,
-              province,district,school,subjects,
-              created_at AS "at",wa_status AS "waStatus",(user_id IS NOT NULL) AS registered,
+              province,district,school,subjects,decided_by AS "decidedBy",
+              created_at AS "at",
+              CASE WHEN type='learner' AND status='pending'
+                   THEN created_at + ($1::float * INTERVAL '1 hour') END AS "autoAt",
+              (user_id IS NOT NULL) AS registered,
               ARRAY(SELECT jsonb_object_keys(docs)) AS "docKeys"
        FROM rise_applications
        ORDER BY CASE status WHEN 'pending' THEN 0 WHEN 'accepted' THEN 1 ELSE 2 END, created_at DESC
-       LIMIT 500`);
-    res.json({ applications: r.rows.map(x => ({ ...x, waNumber: waNumber(x.cell) })) });
+       LIMIT 500`, [AUTO_ACCEPT_HOURS]);
+    res.json({ applications: r.rows, autoAcceptHours: AUTO_ACCEPT_HOURS });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -1550,12 +1551,11 @@ app.patch('/api/admin/applications/:id', admin, async (req, res) => {
     const q = await pool.query('SELECT * FROM rise_applications WHERE id=$1', [req.params.id]);
     if (!q.rowCount) return res.status(404).json({ error: 'Application not found.' });
     const a = q.rows[0];
-    const link = req.protocol + '://' + req.get('host');
 
     if (action === 'accept') {
+      // Accepts at once (learners are otherwise accepted automatically after the waiting period)
       await pool.query("UPDATE rise_applications SET status='accepted',decided_at=NOW(),decided_by=$2 WHERE id=$1", [a.id, req.user.id]);
-      const wa = await notifyApplicant(a, link);
-      return res.json({ ok: true, whatsapp: wa });
+      return res.json({ ok: true });
     }
     if (action === 'reject') {
       if (a.user_id) return res.status(409).json({ error: 'This applicant has already registered.' });
@@ -1563,9 +1563,7 @@ app.patch('/api/admin/applications/:id', admin, async (req, res) => {
       return res.json({ ok: true });
     }
     if (action === 'resend') {
-      if (a.status !== 'accepted') return res.status(409).json({ error: 'Only accepted applications can be notified.' });
-      const wa = await notifyApplicant(a, link);
-      return res.json({ ok: true, whatsapp: wa });
+      return res.status(400).json({ error: 'WhatsApp messages are switched off.' });
     }
     if (action === 'location') {
       const province = PROVINCES.find(p => p.toLowerCase() === String(req.body.province || '').toLowerCase()) || a.province;
@@ -1588,7 +1586,7 @@ app.patch('/api/admin/applications/:id', admin, async (req, res) => {
   }
 });
 
-// Recent WhatsApp updates sent to parents about new uploads
+// Old WhatsApp log (kept so older pages do not break)
 app.get('/api/admin/notices', admin, async (req, res) => {
   try {
     const r = await pool.query('SELECT subject,what,title,recipients,sent,failed,note,at FROM rise_notify_log ORDER BY at DESC LIMIT 30');
@@ -1603,7 +1601,11 @@ app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 init()
   .then(() => ensureComp())
   .then(() => ensureApps())
-  .then(() => app.listen(PORT, '0.0.0.0', () => console.log('RISE COLLECTIVE running on ' + PORT)))
+  .then(() => autoAcceptLearners())
+  .then(() => app.listen(PORT, '0.0.0.0', () => {
+    console.log('RISE COLLECTIVE running on ' + PORT);
+    setInterval(autoAcceptLearners, 5 * 60 * 1000); // check for due learner applications every 5 minutes
+  }))
   .catch(e => {
     console.error(e);
     process.exit(1);
