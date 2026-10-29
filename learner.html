@@ -1,12 +1,424 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Learner | RISE COLLECTIVE</title><link rel="stylesheet" href="style.css"><link rel="stylesheet" href="tiles.css"></head><body>
-<header class="top"><div class="brand"><span class="logo"></span><div>RISE COLLECTIVE<small>LEARNER PORTAL</small></div></div><div>👤 <span id="who"></span> <button class="btn sm" onclick="logout()">Logout</button></div></header><main><h2>Welcome</h2>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lecturer | RISE COLLECTIVE</title>
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="tiles.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <span class="logo"></span>
+    <div>RISE COLLECTIVE<small>LECTURER / ADMIN</small></div>
+  </div>
+  <div>👤 <span id="who"></span> <button class="btn sm" onclick="logout()">Logout</button></div>
+</header>
+
+<main>
+<div id="home">
+<h2>Welcome</h2>
 <div class="tiles">
-<a class="tile" href="learner-assessments.html"><span class="ico">📝</span><div><div class="count" id="cPending">–</div><h3>Assessments</h3><p>View and submit your work</p></div></a>
-<a class="tile" href="learner-marks.html"><span class="ico">🏆</span><div><div class="count" id="cMarked">–</div><h3>My Marks</h3><p>Results and feedback</p></div></a>
-<a class="tile" href="learner-top.html"><span class="ico">🏅</span><div><div class="count">Top 5</div><h3>Top 5 in my district</h3><p>Best learners in your district</p></div></a>
-</div></main>
-<script src="app.js"></script><script>
-const u=guard('learner');
-(async()=>{try{const d=await api('/learner/data?userId='+encodeURIComponent(u.id));const A=d.assessments,S=d.submissions;
-const marked=S.filter(s=>s.mark!=null).length;$('#cMarked').textContent=marked;$('#cPending').textContent=A.length-marked}catch(e){}})();
-</script></body></html>
+
+<a class="tile" href="#" data-t="ap">
+  <span class="ico">📝</span>
+  <div><div class="count" id="cAs">–</div><h3>Assessments</h3><p>Create and manage assessments</p></div>
+</a>
+
+<a class="tile" href="#" data-t="sp">
+  <span class="ico">✅</span>
+  <div><div class="count" id="cMk">–</div><h3>Marking</h3><p>Submissions waiting to be marked</p></div>
+</a>
+
+<a class="tile" href="#" data-t="lp">
+  <span class="ico">👥</span>
+  <div><div class="count" id="cLrn">–</div><h3>Learners</h3><p>Student numbers, subjects and accounts</p></div>
+</a>
+
+<a class="tile" href="#" data-t="apps" id="applicationControlTile" style="display:none">
+  <span class="ico">🔒</span>
+  <div>
+    <h3>Applications</h3>
+    <p>Open or close learner and junior tutor applications</p>
+    <strong id="applicationTileStatus">Checking status…</strong>
+  </div>
+</a>
+
+</div>
+</div>
+
+<div id="ap" class="pane" hidden>
+<a class="back" href="#" onclick="tab('home');return false">← Home</a>
+<div class="card">
+<h3>New assessment</h3>
+<form id="af">
+<label>Subject</label><select name="sub" id="asub"></select>
+<label>Title</label><input name="ttl" required>
+<label>Instructions</label><textarea name="desc"></textarea>
+<div class="row">
+<div><label>Total marks</label><input name="total" type="number" min="1" value="100" required></div>
+<div><label>Deadline</label><input name="due" type="datetime-local" required></div>
+</div>
+<label>Attach file (optional, max 1.5MB)</label>
+<input name="file" type="file">
+<button class="btn">Publish</button>
+</form>
+</div>
+<div id="al" class="boxes"></div>
+<p class="m">Registration link: <b id="lnk"></b></p>
+</div>
+
+<div id="lp" class="pane" hidden>
+<a class="back" href="#" onclick="tab('home');return false">← Home</a>
+<div id="ll"></div>
+</div>
+
+<div id="sp" class="pane" hidden>
+<a class="back" href="#" onclick="tab('home');return false">← Home</a>
+<label>Assessment</label>
+<select id="sel"></select>
+<div id="sub"></div>
+</div>
+
+<div id="apps" class="pane" hidden>
+<a class="back" href="#" onclick="tab('home');return false">← Home</a>
+<div class="card">
+<h3>Application settings</h3>
+<p>Control both learner applications and junior tutor applications. This setting is available to administrators only.</p>
+<p id="applicationStatusText">Checking status…</p>
+<button type="button" class="btn" id="applicationToggle" disabled>Loading…</button>
+<p class="m">When closed, the application page displays “Applications are currently closed” and the server rejects new submissions.</p>
+</div>
+</div>
+</main>
+
+<script src="app.js"></script>
+<script>
+const u = guard('admin') || guard('lecturer');
+let cur = null, SUBJ = [];
+
+$('#lnk').textContent = location.href.replace('lecturer.html','index.html?register');
+
+const applicationAdmin = !!u && u.role === 'admin';
+
+if (applicationAdmin) {
+  $('#applicationControlTile').style.display = 'flex';
+}
+
+let applicationOpen = true;
+
+async function loadApplicationStatus() {
+  if (!applicationAdmin) return;
+
+  try {
+    const d = await api('/apply/status');
+    applicationOpen = d.open === true;
+
+    $('#applicationTileStatus').textContent =
+      applicationOpen ? 'Currently OPEN' : 'Currently CLOSED';
+
+    $('#applicationStatusText').textContent = applicationOpen
+      ? 'Applications are OPEN. New learner and junior tutor applications are accepted.'
+      : 'Applications are CLOSED. New learner and junior tutor applications are blocked.';
+
+    $('#applicationToggle').textContent =
+      applicationOpen ? 'Close applications' : 'Open applications';
+
+    $('#applicationToggle').disabled = false;
+  } catch (e) {
+    $('#applicationStatusText').textContent =
+      'Could not load application status: ' + esc(e.message);
+    $('#applicationToggle').disabled = true;
+  }
+}
+
+$('#applicationToggle').onclick = async () => {
+  if (!applicationAdmin) return;
+
+  const nextOpen = !applicationOpen;
+  const action = nextOpen ? 'open' : 'close';
+
+  if (!confirm('Are you sure you want to ' + action +
+      ' learner and junior tutor applications?')) return;
+
+  $('#applicationToggle').disabled = true;
+
+  try {
+    await api('/admin/application-status', {
+      method: 'PATCH',
+      body: JSON.stringify({ open: nextOpen })
+    });
+
+    await loadApplicationStatus();
+
+    alert('Applications are now ' + (nextOpen ? 'OPEN.' : 'CLOSED.'));
+  } catch (e) {
+    alert(e.message);
+    $('#applicationToggle').disabled = false;
+  }
+};
+
+loadApplicationStatus();
+
+api('/subjects').then(d => {
+  SUBJ = d.subjects.map(s => s.name);
+  $('#asub').innerHTML = SUBJ.map(s =>
+    `<option>${esc(s)}</option>`
+  ).join('') || '<option value="">(no subject assigned to you)</option>';
+}).catch(() => {});
+
+function tab(n) {
+  $('#home').hidden = n !== 'home';
+  $$('.pane').forEach(p => p.hidden = p.id !== n);
+  render();
+}
+
+$$('.tile[data-t]').forEach(t => {
+  t.onclick = e => {
+    e.preventDefault();
+    tab(t.dataset.t);
+  };
+});
+
+$('#sel').onchange = e => {
+  cur = e.target.value;
+  render();
+};
+
+$('#af').onsubmit = async e => {
+  e.preventDefault();
+
+  const f = e.target.elements;
+  let file;
+
+  try {
+    file = await readFile(f.file.files[0]);
+  } catch (x) {
+    return alert(x);
+  }
+
+  try {
+    await api('/assessments', {
+      method: 'POST',
+      body: JSON.stringify({
+        subject: f.sub.value,
+        title: f.ttl.value,
+        desc: f.desc.value,
+        total: +f.total.value,
+        due: f.due.value,
+        file
+      })
+    });
+
+    e.target.reset();
+    render();
+    alert('Assessment published. Parents of learners in this subject are told on WhatsApp.');
+  } catch (x) {
+    alert(x.message);
+  }
+};
+
+async function setSt(id, status) {
+  try {
+    await api('/admin/users/' + id, {
+      method: 'PATCH',
+      body: JSON.stringify({ status })
+    });
+    render();
+  } catch (x) {
+    alert(x.message);
+  }
+}
+
+async function delU(id) {
+  if (!confirm('Delete this learner and submissions?')) return;
+
+  try {
+    await api('/admin/users/' + id, { method: 'DELETE' });
+    render();
+  } catch (x) {
+    alert(x.message);
+  }
+}
+
+async function resetPw(id) {
+  const p = prompt('New password (minimum 6 characters):');
+  if (!p) return;
+  if (p.length < 6) return alert('Too short.');
+
+  try {
+    await api('/admin/users/' + id + '/password', {
+      method: 'PATCH',
+      body: JSON.stringify({ password: p })
+    });
+    alert('Password changed.');
+  } catch (x) {
+    alert(x.message);
+  }
+}
+
+async function editSub(id) {
+  const l = (window.LL || []).find(x => x.id === id);
+  const v = prompt(
+    'Subjects, separated by commas. Available: ' + SUBJ.join(', '),
+    ((l && l.subjects) || []).join(', ')
+  );
+
+  if (v === null) return;
+
+  try {
+    await api('/admin/users/' + id + '/subjects', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        subjects: v.split(',').map(s => s.trim()).filter(Boolean)
+      })
+    });
+    render();
+  } catch (x) {
+    alert(x.message);
+  }
+}
+
+async function delA(id) {
+  if (!confirm('Delete assessment and submissions?')) return;
+
+  try {
+    await api('/assessments/' + id, { method: 'DELETE' });
+    render();
+  } catch (x) {
+    alert(x.message);
+  }
+}
+
+function view(id) {
+  cur = id;
+  tab('sp');
+}
+
+async function save(id, tot) {
+  const m = $('#m' + id).value;
+
+  if (m === '' || +m < 0 || +m > tot) {
+    return alert('Mark must be 0–' + tot);
+  }
+
+  try {
+    await api('/submissions/' + id, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        mark: +m,
+        feedback: $('#f' + id).value
+      })
+    });
+
+    alert('Saved');
+    render();
+  } catch (x) {
+    alert(x.message);
+  }
+}
+
+async function render() {
+  try {
+    const d = await api('/admin/data');
+    const A = d.assessments, S = d.submissions, L = d.learners;
+
+    window.LL = L;
+
+    const forA = a => L.filter(l =>
+      !a.subject ||
+      (l.subjects || []).includes(a.subject) ||
+      S.some(x => x.aid === a.id && x.uid === l.id)
+    );
+
+    $('#al').innerHTML = A.map(a => {
+      const n = S.filter(s => s.aid === a.id).length;
+
+      return `<div class="card">
+        <div class="row">
+          <h3>${esc(a.title)}</h3>
+          <span class="tag">${n}/${forA(a).length} submitted</span>
+        </div>
+        <p class="m">${esc(a.subject || 'All subjects')}</p>
+        <p>${esc(a.desc)}</p>
+        <p class="m">Due ${fmt(a.due)} · ${a.total} marks</p>
+        ${fileLink(a.file)}
+        <button class="btn sm ghost" onclick="view('${a.id}')">Mark</button>
+        <button class="btn sm ghost" onclick="delA('${a.id}')">Delete</button>
+      </div>`;
+    }).join('') || '<p class="m">No assessments yet.</p>';
+
+    const pend = L.filter(x => x.status === 'pending').length;
+    $('#cLrn').textContent = pend;
+    $('#cAs').textContent = A.length;
+    $('#cMk').textContent = S.filter(s => s.mark == null).length;
+
+    $('#ll').innerHTML = L.length
+      ? `<p class="m"><b>Learners are shown by student number and email.</b> Pending learners cannot log in until you approve them.</p>
+      <div class="boxes">${L.map(l => {
+        const st = l.status || 'approved';
+
+        return `<div class="card">
+          <h3>${esc(l.studentNumber || 'No student number')}</h3>
+          <p>${esc(l.email)}</p>
+          <p class="m">Subjects: ${esc((l.subjects || []).join(', ') || 'none yet')}</p>
+          <p class="m">${esc([l.school,l.district,l.province].filter(Boolean).join(' · ') || 'No school or district on file')}</p>
+          <p><span class="tag ${st === 'approved' ? 'ok' : st === 'pending' ? 'warn' : 'bad'}">${st}</span></p>
+          <p class="m">Last login: ${fmt(l.lastLogin)}</p>
+          <p>
+          ${st !== 'approved'
+            ? `<button class="btn sm" onclick="setSt('${l.id}','approved')">${st === 'pending' ? 'Approve' : 'Unblock'}</button>`
+            : `<button class="btn sm ghost" onclick="setSt('${l.id}','blocked')">Block</button>`}
+          <button class="btn sm ghost" onclick="editSub('${l.id}')">Edit subjects</button>
+          <button class="btn sm ghost" onclick="resetPw('${l.id}')">Reset password</button>
+          <button class="btn sm ghost" onclick="delU('${l.id}')">Delete</button>
+          </p>
+        </div>`;
+      }).join('')}</div>`
+      : '<p class="m">No learners registered yet.</p>';
+
+    const sel = $('#sel');
+
+    sel.innerHTML = A.map(a =>
+      `<option value="${a.id}">${esc((a.subject ? a.subject + ' – ' : '') + a.title)}</option>`
+    ).join('');
+
+    if (cur && A.some(a => a.id === cur)) sel.value = cur;
+
+    cur = sel.value;
+
+    const a = A.find(x => x.id === cur);
+
+    $('#sub').innerHTML = !a
+      ? '<p class="m">Create an assessment first.</p>'
+      : `<div class="boxes">${forA(a).map(l => {
+          const s = S.find(x => x.aid === a.id && x.uid === l.id);
+
+          return `<div class="card">
+            <h3>${esc(l.studentNumber || '—')}</h3>
+            <p class="m">${esc(l.email)}</p>
+            <p>${s
+              ? (s.mark != null
+                ? '<span class="tag ok">Marked</span>'
+                : '<span class="tag">Submitted</span> <small>' + fmt(s.at) + '</small>')
+              : '<span class="tag bad">Not submitted</span>'}</p>
+            ${s
+              ? `<p>${esc(s.text).slice(0,120)} ${fileLink(s.file)}</p>
+                <label>Mark /${a.total}</label>
+                <input type="number" min="0" max="${a.total}" value="${s.mark == null ? '' : s.mark}" id="m${s.id}">
+                <label>Feedback</label>
+                <textarea id="f${s.id}">${esc(s.feedback)}</textarea>
+                <button class="btn sm" onclick="save('${s.id}',${a.total})">Save</button>`
+              : ''}
+          </div>`;
+        }).join('')}</div>`;
+  } catch (x) {
+    alert(x.message);
+  }
+}
+
+render();
+</script>
+</body>
+</html>
