@@ -1,34 +1,403 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>RISE COLLECTIVE Portal</title><link rel="stylesheet" href="style.css"><style>
-body{background:linear-gradient(rgba(15,27,61,.78),rgba(15,27,61,.78)),url('rise_pic.jpg') center/cover no-repeat fixed;background-color:#0f1b3d;min-height:100vh}
-.login>h1,.login>p{color:#fff!important}
-.login .card,.card{background:#fff!important;color:#111!important}
-.card label,.card p,.card h3{color:#111!important;opacity:1!important;visibility:visible!important}
-.card label{display:block!important;font-weight:600;margin-top:10px}
-.card input,.card select,.card textarea{color:#111!important;background:#fff!important;border:1px solid #999!important}
-.tabs button{color:#111}.tabs button.on{color:#fff}
-</style></head><body>
-<div class="login"><div class="logo big"></div><h1>RISE COLLECTIVE</h1><p class="m">Assessment Portal</p><div class="card"><div class="tabs"><button class="on" data-t="l">Login</button><button data-t="r">Register</button><button type="button" onclick="location.href='apply.html'">Apply</button></div>
-<form id="lf"><label>Student number or email</label><input name="email" type="text" required autocomplete="username"><label>Password</label><input name="pass" type="password" required><button class="btn" style="width:100%">Login</button><p class="m">Learners log in with their 10-digit student number. New here? Press <b>Apply</b> first to get your student number.</p></form>
-<form id="rf" hidden><label>Register as</label><select name="role" id="roleSel"><option value="learner">Learner</option><option value="lecturer">Lecturer</option><option value="tutor">Junior Tutor</option></select><label>Full name</label><input name="name" required><label>Email</label><input name="email" type="email" required><label>Password</label><input name="pass" type="password" minlength="6" required><div id="snBox"><label>Student number (10 digits)</label><input name="sn" inputmode="numeric" maxlength="10" pattern="[0-9]{10}" autocomplete="off" required></div><div id="codeBox" hidden><label id="codeLbl">Access code</label><input name="code" autocomplete="off"></div><p class="m" id="regNote">Use the student number you received when you applied. Your application must be accepted first.</p><button class="btn" id="regBtn" style="width:100%">Create learner account</button></form></div></div>
-<script src="app.js"></script><script>
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+
+<title>RISE COLLECTIVE Portal</title>
+
+<!-- GOOGLE SEARCH ENGINE OPTIMISATION -->
+<meta name="description" content="RISE COLLECTIVE provides educational assessments, learning resources, notes and videos for learners and educators.">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://learner-assessment-website-zpub.onrender.com/">
+
+<link rel="stylesheet" href="style.css">
+
+<style>
+body{
+background:linear-gradient(rgba(15,27,61,.78),rgba(15,27,61,.78)),url('rise_pic.jpg') center/cover no-repeat fixed;
+background-color:#0f1b3d;
+min-height:100vh
+}
+
+.login>h1,.login>p{
+color:#fff!important
+}
+
+.login .card,.card{
+background:#fff!important;
+color:#111!important
+}
+
+.card label,.card p,.card h3{
+color:#111!important;
+opacity:1!important;
+visibility:visible!important
+}
+
+.card label{
+display:block!important;
+font-weight:600;
+margin-top:10px
+}
+
+.card input,.card select,.card textarea{
+color:#111!important;
+background:#fff!important;
+border:1px solid #999!important
+}
+
+.tabs button{
+color:#111
+}
+
+.tabs button.on{
+color:#fff
+}
+</style>
+</head>
+
+<body>
+
+<div class="login">
+
+<div class="logo big"></div>
+
+<h1>RISE COLLECTIVE</h1>
+
+<p class="m">Assessment Portal</p>
+
+<div class="card">
+
+<div class="tabs">
+
+<button class="on" data-t="l">Login</button>
+
+<button data-t="r">Register</button>
+
+<button type="button" onclick="location.href='apply.html'">Apply</button>
+
+</div>
+
+<!-- LOGIN FORM -->
+
+<form id="lf">
+
+<label>Student number or email</label>
+
+<input name="email" type="text" required autocomplete="username">
+
+<label>Password</label>
+
+<input name="pass" type="password" required>
+
+<button class="btn" style="width:100%">Login</button>
+
+<p class="m">
+Learners log in with their 10-digit student number.
+New here? Press <b>Apply</b> first to get your student number.
+</p>
+
+</form>
+
+<!-- REGISTRATION FORM -->
+
+<form id="rf" hidden>
+
+<label>Register as</label>
+
+<select name="role" id="roleSel">
+
+<option value="learner">Learner</option>
+<option value="lecturer">Lecturer</option>
+<option value="tutor">Junior Tutor</option>
+
+</select>
+
+<label>Full name</label>
+
+<input name="name" required>
+
+<label>Email</label>
+
+<input name="email" type="email" required>
+
+<label>Password</label>
+
+<input name="pass" type="password" minlength="6" required>
+
+<div id="snBox">
+
+<label>Student number (10 digits)</label>
+
+<input
+name="sn"
+inputmode="numeric"
+maxlength="10"
+pattern="[0-9]{10}"
+autocomplete="off"
+required
+>
+
+</div>
+
+<div id="codeBox" hidden>
+
+<label id="codeLbl">Access code</label>
+
+<input name="code" autocomplete="off">
+
+</div>
+
+<p class="m" id="regNote">
+Use the student number you received when you applied.
+Your application must be accepted first.
+</p>
+
+<button class="btn" id="regBtn" style="width:100%">
+Create learner account
+</button>
+
+</form>
+
+</div>
+</div>
+
+<script src="app.js"></script>
+
+<script>
+
 const isStaff=r=>r==='admin'||r==='lecturer'||r==='tutor';
+
 let u=session();
-if(u){const t=+sessionStorage.getItem('rr')||0;if(Date.now()-t<6000){try{localStorage.clear();sessionStorage.clear()}catch(e){}u=null}else{try{sessionStorage.setItem('rr',Date.now())}catch(e){}location.href=isStaff(u.role)?'lecturer.html':'learner.html'}}
-function show(t){$('#lf').hidden=t!=='l';$('#rf').hidden=t!=='r';$$('.tabs button').forEach(b=>b.classList.toggle('on',b.dataset.t===t))}
-$$('.tabs button[data-t]').forEach(b=>b.onclick=()=>show(b.dataset.t));if(location.search.includes('register'))show('r');
-function roleUI(){const r=$('#roleSel').value,L=r==='learner',el=$('#rf').elements;
-$('#snBox').hidden=!L;el.sn.required=L;
-$('#codeBox').hidden=L;el.code.required=(r==='lecturer'||r==='secretadmin');
-$('#codeLbl').textContent=r==='secretadmin'?'Secret admin code':r==='tutor'?'Access code (only if you did not apply)':'Access code';
-$('#regBtn').textContent=r==='lecturer'?'Create lecturer account':r==='tutor'?'Create junior tutor account':r==='secretadmin'?'Create admin account':'Create learner account';
-$('#regNote').textContent=r==='secretadmin'?'One-time option. New admin: fill in your details. To upgrade an existing account, use its email and its current password. It disappears once used.':r==='lecturer'?'Lecturer registration requires the access code from the administrator.':r==='tutor'?'Junior tutors: use the same email you applied with. Your application must be accepted first.':'Use the student number you received when you applied. Your application must be accepted first.'}
+
+if(u){
+
+const t=+sessionStorage.getItem('rr')||0;
+
+if(Date.now()-t<6000){
+
+try{
+localStorage.clear();
+sessionStorage.clear()
+}catch(e){}
+
+u=null;
+
+}else{
+
+try{
+sessionStorage.setItem('rr',Date.now())
+}catch(e){}
+
+location.href=isStaff(u.role)?'lecturer.html':'learner.html';
+
+}
+
+}
+
+function show(t){
+
+$('#lf').hidden=t!=='l';
+
+$('#rf').hidden=t!=='r';
+
+$$('.tabs button').forEach(b=>
+b.classList.toggle('on',b.dataset.t===t)
+);
+
+}
+
+$$('.tabs button[data-t]').forEach(b=>
+b.onclick=()=>show(b.dataset.t)
+);
+
+if(location.search.includes('register'))show('r');
+
+function roleUI(){
+
+const r=$('#roleSel').value;
+
+const L=r==='learner';
+
+const el=$('#rf').elements;
+
+$('#snBox').hidden=!L;
+
+el.sn.required=L;
+
+$('#codeBox').hidden=L;
+
+el.code.required=(r==='lecturer'||r==='secretadmin');
+
+$('#codeLbl').textContent=
+r==='secretadmin'?'Secret admin code':
+r==='tutor'?'Access code (only if you did not apply)':
+'Access code';
+
+$('#regBtn').textContent=
+r==='lecturer'?'Create lecturer account':
+r==='tutor'?'Create junior tutor account':
+r==='secretadmin'?'Create admin account':
+'Create learner account';
+
+$('#regNote').textContent=
+r==='secretadmin'
+?'One-time option. New admin: fill in your details. To upgrade an existing account, use its email and its current password. It disappears once used.'
+:r==='lecturer'
+?'Lecturer registration requires the access code from the administrator.'
+:r==='tutor'
+?'Junior tutors: use the same email you applied with. Your application must be accepted first.'
+:'Use the student number you received when you applied. Your application must be accepted first.';
+
+}
+
 $('#roleSel').onchange=roleUI;
-// The one-time "Secret Admin" option is only listed while the server says it is still available
-async function loadOptions(){try{const r=await fetch('/api/auth/options');const d=await r.json();const sel=$('#roleSel');const has=[...sel.options].some(o=>o.value==='secretadmin');
-if(d.secretAdmin&&!has){const o=document.createElement('option');o.value='secretadmin';o.textContent='Secret Admin (one-time)';sel.appendChild(o)}
-if(!d.secretAdmin&&has){if(sel.value==='secretadmin')sel.value='learner';[...sel.options].forEach(o=>{if(o.value==='secretadmin')o.remove()});roleUI()}}catch(e){}}
-loadOptions();
-$('#lf').onsubmit=async e=>{e.preventDefault();const f=e.target.elements;try{const x=await api('/auth/login',{method:'POST',body:JSON.stringify({email:f.email.value,password:f.pass.value})});saveSession(x.user);location.href=isStaff(x.user.role)?'lecturer.html':'learner.html'}catch(x){alert(x.message)}};
-$('#rf').onsubmit=async e=>{e.preventDefault();const f=e.target.elements;try{const x=await api('/auth/register',{method:'POST',body:JSON.stringify({name:f.name.value,email:f.email.value,password:f.pass.value,role:f.role.value,code:f.code.value,studentNumber:f.sn.value})});alert(x.upgraded?'Your account is now an admin. Log in with the same email and password.':x.status==='approved'?'Account created. Learners log in with their student number and password.':'Registration submitted. Wait for Lecturer/Admin approval before logging in.');e.target.reset();roleUI();loadOptions();show('l')}catch(x){alert(x.message)}};
+
+// ONE-TIME SECRET ADMIN OPTION
+
+async function loadOptions(){
+
+try{
+
+const r=await fetch('/api/auth/options');
+
+const d=await r.json();
+
+const sel=$('#roleSel');
+
+const has=[...sel.options].some(o=>o.value==='secretadmin');
+
+if(d.secretAdmin&&!has){
+
+const o=document.createElement('option');
+
+o.value='secretadmin';
+
+o.textContent='Secret Admin (one-time)';
+
+sel.appendChild(o);
+
+}
+
+if(!d.secretAdmin&&has){
+
+if(sel.value==='secretadmin')sel.value='learner';
+
+[...sel.options].forEach(o=>{
+
+if(o.value==='secretadmin')o.remove();
+
+});
+
 roleUI();
-</script></body></html>
+
+}
+
+}catch(e){}
+
+}
+
+loadOptions();
+
+// LOGIN
+
+$('#lf').onsubmit=async e=>{
+
+e.preventDefault();
+
+const f=e.target.elements;
+
+try{
+
+const x=await api('/auth/login',{
+
+method:'POST',
+
+body:JSON.stringify({
+
+email:f.email.value,
+
+password:f.pass.value
+
+})
+
+});
+
+saveSession(x.user);
+
+location.href=isStaff(x.user.role)?'lecturer.html':'learner.html';
+
+}catch(x){
+
+alert(x.message);
+
+}
+
+};
+
+// REGISTRATION
+
+$('#rf').onsubmit=async e=>{
+
+e.preventDefault();
+
+const f=e.target.elements;
+
+try{
+
+const x=await api('/auth/register',{
+
+method:'POST',
+
+body:JSON.stringify({
+
+name:f.name.value,
+
+email:f.email.value,
+
+password:f.pass.value,
+
+role:f.role.value,
+
+code:f.code.value,
+
+studentNumber:f.sn.value
+
+})
+
+});
+
+alert(
+
+x.upgraded
+?'Your account is now an admin. Log in with the same email and password.'
+:x.status==='approved'
+?'Account created. Learners log in with their student number and password.'
+:'Registration submitted. Wait for Lecturer/Admin approval before logging in.'
+
+);
+
+e.target.reset();
+
+roleUI();
+
+loadOptions();
+
+show('l');
+
+}catch(x){
+
+alert(x.message);
+
+}
+
+};
+
+roleUI();
+
+</script>
+
+</body>
+</html>
