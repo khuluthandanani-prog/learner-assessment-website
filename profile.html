@@ -1,0 +1,99 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>My Profile | RISE COLLECTIVE</title><link rel="stylesheet" href="style.css"><link rel="stylesheet" href="tiles.css">
+<style>
+.pf{max-width:720px;margin:20px auto}
+.pf .top{display:flex;gap:20px;align-items:center;flex-wrap:wrap}
+.pf .av{width:130px;height:130px;border-radius:50%;background:#0f1b3d;color:#fff;display:flex;align-items:center;justify-content:center;font-size:2.6rem;font-weight:700;overflow:hidden;border:3px solid #c9a227;flex:none}
+.pf .av img{width:100%;height:100%;object-fit:cover}
+.pf textarea{width:100%;min-height:110px;box-sizing:border-box;font:inherit;padding:8px}
+.pf .big{font-size:2.4rem;font-weight:700;color:#0f1b3d}
+.pf .role{display:inline-block;padding:2px 10px;border-radius:12px;background:#c9a227;color:#111;font-size:.8rem;font-weight:600;text-transform:capitalize}
+.pf table{width:100%;border-collapse:collapse}
+.pf td,.pf th{padding:6px 8px;border-bottom:1px solid #ddd;text-align:left}
+</style></head><body>
+<header class="top"><div class="brand"><span class="logo"></span><div>RISE COLLECTIVE<small>MY PROFILE</small></div></div><div>👤 <span id="who"></span> <button class="btn sm" onclick="logout()">Logout</button></div></header><main>
+<a class="back" href="lecturer.html">← Home</a><h2>My Profile</h2>
+<div id="msg"></div>
+<div class="pf">
+<div class="card">
+ <div class="top">
+  <div class="av" id="av"></div>
+  <div>
+   <h3 id="nm" style="margin:0"></h3>
+   <p style="margin:4px 0"><span class="role" id="rl"></span></p>
+   <p class="m" id="em" style="margin:4px 0"></p>
+   <input type="file" id="pic" accept="image/png,image/jpeg,image/webp" hidden>
+   <button class="btn sm" id="pickBtn">Add / change picture</button>
+   <button class="btn sm ghost" id="rmBtn">Remove picture</button>
+  </div>
+ </div>
+</div>
+
+<div class="card" style="margin-top:16px">
+ <label>Gender</label>
+ <select id="gender"></select>
+ <label>About me (description)</label>
+ <textarea id="bio" maxlength="1000" placeholder="Tell learners a little about yourself, your qualifications and your teaching."></textarea>
+ <p class="m"><span id="cnt">0</span>/1000</p>
+ <button class="btn" id="save">Save profile</button>
+</div>
+
+<div class="card" style="margin-top:16px;text-align:center">
+ <div class="big" id="tot">0</div>
+ <p id="totLbl" style="margin:0"></p>
+</div>
+
+<div class="card" style="margin-top:16px">
+ <h3 id="subTitle">Learners per subject</h3>
+ <div id="subs"></div>
+</div>
+</div>
+</main>
+<script src="app.js"></script><script>
+const u=guard('admin');
+let P=null,photo=undefined; // photo: undefined = unchanged, null = removed, string = new picture
+
+function initials(n){const p=String(n||'?').trim().split(/\s+/);return ((p[0]||'?')[0]+(p.length>1?p[p.length-1][0]:'')).toUpperCase()}
+function drawAvatar(src){const a=$('#av');a.innerHTML=src?'<img alt="Profile picture" src="'+src+'">':esc(initials(P&&P.name))}
+
+async function load(){
+ try{
+  P=await api('/profile/me');
+  $('#nm').textContent=P.name;$('#rl').textContent=P.role==='tutor'?'junior tutor':P.role;$('#em').textContent=P.email;
+  $('#gender').innerHTML='<option value="">Choose…</option>'+P.genders.map(g=>'<option'+(g===P.gender?' selected':'')+'>'+esc(g)+'</option>').join('');
+  $('#bio').value=P.bio;$('#cnt').textContent=P.bio.length;
+  photo=undefined;drawAvatar(P.photo);
+  $('#tot').textContent=P.totalLearners;
+  $('#totLbl').textContent=P.allSubjects?'approved learners on RISE COLLECTIVE':'approved learners in your subject'+(P.subjects.length===1?'':'s');
+  $('#subTitle').textContent=P.allSubjects?'Learners per subject (all subjects)':'Learners per subject';
+  $('#subs').innerHTML=P.subjects.length
+   ?'<table><tr><th>Subject</th><th>Learners</th></tr>'+P.subjects.map(s=>'<tr><td>'+esc(s.name)+'</td><td><b>'+s.learners+'</b></td></tr>').join('')+'</table>'
+   :'<p class="m">No subject has been assigned to you yet. Ask the admin to add your subject.</p>';
+ }catch(e){$('#msg').innerHTML='<div class="card"><b>Unable to load.</b><p>'+esc(e.message)+'</p></div>'}
+}
+
+// Shrink the chosen picture to a 320x320 square so it stays small
+function shrink(file){return new Promise((res,rej)=>{
+ if(!/^image\/(jpeg|png|webp)$/.test(file.type))return rej('Choose a JPEG, PNG or WebP image.');
+ const fr=new FileReader();
+ fr.onerror=()=>rej('Could not read the picture.');
+ fr.onload=()=>{const im=new Image();im.onerror=()=>rej('Could not open the picture.');
+  im.onload=()=>{const S=320,c=document.createElement('canvas');c.width=c.height=S;const x=c.getContext('2d');
+   const m=Math.min(im.width,im.height),sx=(im.width-m)/2,sy=(im.height-m)/2;
+   x.fillStyle='#fff';x.fillRect(0,0,S,S);x.drawImage(im,sx,sy,m,m,0,0,S,S);
+   res(c.toDataURL('image/jpeg',0.85))};
+  im.src=fr.result};
+ fr.readAsDataURL(file)})}
+
+$('#pickBtn').onclick=()=>$('#pic').click();
+$('#pic').onchange=async e=>{const f=e.target.files[0];if(!f)return;
+ try{photo=await shrink(f);drawAvatar(photo)}catch(x){alert(x)}
+ e.target.value=''};
+$('#rmBtn').onclick=()=>{photo=null;drawAvatar(null)};
+$('#bio').oninput=()=>{$('#cnt').textContent=$('#bio').value.length};
+$('#save').onclick=async()=>{
+ const body={bio:$('#bio').value,gender:$('#gender').value};
+ if(photo!==undefined)body.photo=photo;
+ try{await api('/profile/me',{method:'PATCH',body:JSON.stringify(body)});alert('Profile saved.');load()}
+ catch(e){alert(e.message)}};
+load();
+</script></body></html>
