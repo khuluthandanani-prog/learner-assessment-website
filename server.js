@@ -1,4 +1,3 @@
-
 const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
@@ -2127,6 +2126,7 @@ app.patch('/api/admin/apply-status', adminOnly, async (req, res) => {
 });
 
 // Administrators and lecturers can review applications.
+// The document keys are fixed by application type, so the large "docs" column is never read here.
 app.get('/api/admin/applications', admin, async (req, res) => {
   try {
     await autoAcceptLearners();
@@ -2139,7 +2139,10 @@ app.get('/api/admin/applications', admin, async (req, res) => {
                 THEN created_at + ($1::float * INTERVAL '1 hour')
               END AS "autoAt",
               (user_id IS NOT NULL) AS registered,
-              ARRAY(SELECT jsonb_object_keys(docs)) AS "docKeys"
+              CASE WHEN type='learner'
+                THEN ARRAY['report']
+                ELSE ARRAY['matric','transcript','idcopy']
+              END AS "docKeys"
        FROM rise_applications
        ORDER BY CASE status WHEN 'pending' THEN 0 WHEN 'accepted' THEN 1 ELSE 2 END,
                 created_at DESC
@@ -2147,8 +2150,12 @@ app.get('/api/admin/applications', admin, async (req, res) => {
       [AUTO_ACCEPT_HOURS]
     );
 
-    res.json({ applications: r.rows, autoAcceptHours: AUTO_ACCEPT_HOURS });
+    res.json({
+      applications: r.rows.map(x => ({ ...x, waNumber: waNumber(x.cell) })),
+      autoAcceptHours: AUTO_ACCEPT_HOURS
+    });
   } catch (e) {
+    console.error('Load applications failed:', e.message);
     res.status(500).json({ error: e.message });
   }
 });
@@ -2276,6 +2283,22 @@ app.get('/api/admin/notices', admin, async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// Any unmatched /api route must return JSON, not the HTML home page.
+app.use('/api', (req, res) => {
+  res.status(404).json({ error: 'API route not found: ' + req.method + ' ' + req.originalUrl });
+});
+
+// Last-resort error handler: always answer with JSON.
+app.use((err, req, res, next) => {
+  console.error('Unhandled error:', err.message);
+  if (res.headersSent) return next(err);
+  res.status(err.status || 500).json({
+    error: err.type === 'entity.too.large'
+      ? 'The uploaded files are too large. Please use smaller files.'
+      : (err.message || 'Server error')
+  });
 });
 
 app.get('*', (req, res) => {
