@@ -24,6 +24,8 @@ function addLinks(){
  const u=session();if(!u)return;
  const onLec=/lecturer\.html/.test(location.pathname),onLrn=/learner\.html/.test(location.pathname),onAny=onLec||onLrn;
  const mgr=u.role==='admin'||u.role==='lecturer';
+ // Admins, lecturers and junior tutors: own profile (picture, description, gender, learner numbers)
+ if(onLec)addTile('profileLink','profile.html','🙂','My Profile','Picture, about me and your learners');
  // Admins and lecturers: registered junior tutors
  if(onLec&&mgr)addTile('tutorsLink','tutors.html','👥','Junior Tutors','Registered junior tutors');
  // Admins and lecturers: learner and tutor applications, red count when some are waiting
