@@ -99,10 +99,9 @@ async function applyStatus() {
     "SELECT key FROM rise_settings WHERE key IN ('apply_closed_learner','apply_closed_tutor')"
   );
   const closed = new Set(r.rows.map(x => x.key));
-  return {
-    learner: !closed.has('apply_closed_learner'),
-    tutor: !closed.has('apply_closed_tutor')
-  };
+  const learner = !closed.has('apply_closed_learner');
+  const tutor = !closed.has('apply_closed_tutor');
+  return { learner, tutor, open: learner || tutor };
 }
 
 // Exact message displayed when applications are closed.
@@ -1907,6 +1906,7 @@ app.get('/api/apply/status', async (req, res) => {
     res.status(503).json({
       learner: false,
       tutor: false,
+      open: false,
       error: 'Application status is temporarily unavailable.',
       autoAcceptHours: AUTO_ACCEPT_HOURS
     });
@@ -2086,7 +2086,7 @@ app.post('/api/apply/tutor', async (req, res) => {
 });
 
 // Administrator-only: read application status.
-app.get('/api/admin/apply-status', adminOnly, async (req, res) => {
+app.get(['/api/admin/apply-status', '/api/admin/application-status'], adminOnly, async (req, res) => {
   try {
     res.json({ ...(await applyStatus()), autoAcceptHours: AUTO_ACCEPT_HOURS });
   } catch (e) {
@@ -2096,7 +2096,7 @@ app.get('/api/admin/apply-status', adminOnly, async (req, res) => {
 
 // Administrator-only: open or close learner/tutor applications.
 // Body: { type: 'learner' | 'tutor', open: true | false }
-app.patch('/api/admin/apply-status', adminOnly, async (req, res) => {
+app.patch(['/api/admin/apply-status', '/api/admin/application-status'], adminOnly, async (req, res) => {
   try {
     const type = req.body.type;
 
