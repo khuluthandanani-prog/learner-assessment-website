@@ -94,22 +94,30 @@
 
 <script src="app.js"></script>
 <script>
-let applicationsOpen = true;
+// The server returns { learner: true/false, tutor: true/false }.
+// The server still rejects submissions when a type is closed.
+let openState = { learner: true, tutor: true };
 
 async function refreshApplicationStatus() {
   try {
     const r = await fetch('/api/apply/status', { cache: 'no-store' });
-
     if (!r.ok) throw new Error('status unavailable');
 
     const d = await r.json();
-    applicationsOpen = d.open === true;
-
-    $('#closedNotice').hidden = applicationsOpen;
-    $('#applicationContent').hidden = !applicationsOpen;
+    openState = { learner: d.learner === true, tutor: d.tutor === true };
   } catch (e) {
-    // The server must still reject submissions when applications are closed.
+    return;
   }
+
+  const any = openState.learner || openState.tutor;
+  $('#closedNotice').hidden = any;
+  $('#applicationContent').hidden = !any;
+
+  $('.tile[data-f="lc"]').style.display = openState.learner ? '' : 'none';
+  $('.tile[data-f="tc"]').style.display = openState.tutor ? '' : 'none';
+
+  if (!openState.learner) $('#lc').hidden = true;
+  if (!openState.tutor) $('#tc').hidden = true;
 }
 
 refreshApplicationStatus();
@@ -130,12 +138,14 @@ $$('.tile[data-f]').forEach(t => {
   t.onclick = e => {
     e.preventDefault();
 
-    if (!applicationsOpen) {
+    const k = t.dataset.f;
+    const type = k === 'lc' ? 'learner' : 'tutor';
+
+    if (!openState[type]) {
       refreshApplicationStatus();
       return;
     }
 
-    const k = t.dataset.f;
     $('#lc').hidden = k !== 'lc';
     $('#tc').hidden = k !== 'tc';
     $('#res').hidden = true;
@@ -147,7 +157,7 @@ $$('.tile[data-f]').forEach(t => {
 $('#lf2').onsubmit = async e => {
   e.preventDefault();
 
-  if (!applicationsOpen) {
+  if (!openState.learner) {
     alert('Applications are currently closed.');
     return;
   }
@@ -193,19 +203,20 @@ $('#lf2').onsubmit = async e => {
       '<p>Your student number is</p>' +
       '<div style="font-size:2.2rem;font-weight:700;letter-spacing:2px;color:#111">' +
       esc(x.studentNumber) + '</div>' +
-      '<p><b>Write this number down.</b> You log in with it. When the application is accepted, your parent receives a WhatsApp message. Then press <b>Register</b> on the login page and use this student number.</p>' +
+      '<p><b>Write this number down.</b> You log in with it. Your application is accepted after review (or automatically after ' + esc(x.autoAcceptHours) + ' hours). Then press <b>Register</b> on the login page and use this student number.</p>' +
       '<a class="btn" href="index.html?register">Go to Register</a>';
 
     r.scrollIntoView({ behavior: 'smooth' });
   } catch (x) {
     alert(x.message);
+    refreshApplicationStatus();
   }
 };
 
 $('#tf2').onsubmit = async e => {
   e.preventDefault();
 
-  if (!applicationsOpen) {
+  if (!openState.tutor) {
     alert('Applications are currently closed.');
     return;
   }
@@ -255,6 +266,7 @@ $('#tf2').onsubmit = async e => {
     r.scrollIntoView({ behavior: 'smooth' });
   } catch (x) {
     alert(x.message);
+    refreshApplicationStatus();
   }
 };
 </script>
