@@ -2098,25 +2098,47 @@ app.get(['/api/admin/apply-status', '/api/admin/application-status'], adminOnly,
 // Body: { type: 'learner' | 'tutor', open: true | false }
 app.patch(['/api/admin/apply-status', '/api/admin/application-status'], adminOnly, async (req, res) => {
   try {
-    const type = req.body.type;
+    const b = req.body || {};
 
-    if (!['learner', 'tutor'].includes(type)) {
-      return res.status(400).json({ error: 'Invalid type.' });
+    // Which application type: learner, tutor, or both (when missing, "all" or "both").
+    const t = String(b.type || b.target || b.kind || b.applicationType || '').trim().toLowerCase();
+    let types;
+
+    if (t === 'learner' || t === 'learners') types = ['learner'];
+    else if (t === 'tutor' || t === 'tutors') types = ['tutor'];
+    else if (!t || ['all', 'both', 'applications', 'application'].includes(t)) types = ['learner', 'tutor'];
+    else return res.status(400).json({ error: 'Invalid type: ' + t });
+
+    // Open or closed: accepts open:true/false, closed:true/false, or status:'open'/'closed'.
+    let open;
+    if (typeof b.open === 'boolean') open = b.open;
+    else if (typeof b.closed === 'boolean') open = !b.closed;
+    else if (typeof b.isOpen === 'boolean') open = b.isOpen;
+    else if (typeof b.status === 'string') {
+      const s = b.status.trim().toLowerCase();
+      if (['open', 'opened', 'on'].includes(s)) open = true;
+      else if (['closed', 'close', 'off'].includes(s)) open = false;
+    } else if (typeof b.open === 'string') {
+      const s = b.open.trim().toLowerCase();
+      if (['true', '1', 'yes', 'open'].includes(s)) open = true;
+      else if (['false', '0', 'no', 'closed'].includes(s)) open = false;
     }
 
-    if (typeof req.body.open !== 'boolean') {
-      return res.status(400).json({ error: 'The open field must be true or false.' });
+    if (typeof open !== 'boolean') {
+      return res.status(400).json({ error: 'Say whether applications should be open or closed.' });
     }
 
-    const key = 'apply_closed_' + type;
+    for (const type of types) {
+      const key = 'apply_closed_' + type;
 
-    if (req.body.open) {
-      await pool.query('DELETE FROM rise_settings WHERE key=$1', [key]);
-    } else {
-      await pool.query(
-        "INSERT INTO rise_settings(key,value) VALUES($1,'1') ON CONFLICT (key) DO NOTHING",
-        [key]
-      );
+      if (open) {
+        await pool.query('DELETE FROM rise_settings WHERE key=$1', [key]);
+      } else {
+        await pool.query(
+          "INSERT INTO rise_settings(key,value) VALUES($1,'1') ON CONFLICT (key) DO NOTHING",
+          [key]
+        );
+      }
     }
 
     res.json({ ok: true, ...(await applyStatus()) });
