@@ -1,4 +1,8 @@
 User-agent: *
 Allow: /
+Disallow: /learner
+Disallow: /lecturer
+Disallow: /comp-staff
+Disallow: /admin
 
-Sitemap: https://learner-assessment-website-zpub.onrender.com/sitemap.xml
+Sitemap: https://YOUR-SITE-ADDRESS/sitemap.xml
