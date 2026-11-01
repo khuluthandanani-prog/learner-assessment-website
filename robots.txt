@@ -1,8 +1,2 @@
 User-agent: *
 Allow: /
-Disallow: /learner
-Disallow: /lecturer
-Disallow: /comp-staff
-Disallow: /admin
-
-Sitemap: https://YOUR-SITE-ADDRESS/sitemap.xml
