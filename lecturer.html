@@ -36,14 +36,6 @@
   <div><div class="count" id="cLrn">–</div><h3>Learners</h3><p>Student numbers, subjects and accounts</p></div>
 </a>
 
-<a class="tile" href="applications.html" id="applicationControlTile" style="display:none">
-  <span class="ico">🔒</span>
-  <div>
-    <h3>Applications</h3>
-    <p>View applications and open or close them (admin only)</p>
-  </div>
-</a>
-
 </div>
 </div>
 
@@ -87,11 +79,6 @@ const u = guard('admin') || guard('lecturer');
 let cur = null, SUBJ = [];
 
 $('#lnk').textContent = location.href.replace('lecturer.html','index.html?register');
-
-// Applications are for the admin only
-if (u && u.role === 'admin') {
-  $('#applicationControlTile').style.display = 'flex';
-}
 
 api('/subjects').then(d => {
   SUBJ = d.subjects.map(s => s.name);
