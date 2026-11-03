@@ -51,17 +51,19 @@ document.addEventListener('DOMContentLoaded',addLinks);window.addEventListener('
 // Subject pictures: puts a picture behind each subject box on subjects.html.
 // Subjects without a picture keep their normal look.
 const SUBJECT_PICS={
- 'business studies':'business-studies.jpg',
- 'economics':'economics.webp',
- 'accounting':'accounting.jpg',
- 'life sciences':'life-sciences.jpg',
- 'physics':'physics.webp',
- 'physical sciences':'physics.webp',
- 'technical sciences':'physics.webp',
- 'maths':'maths.webp',
- 'mathematical literacy':'maths.webp',
- 'technical mathematics':'maths.webp'
+ 'business studies':['business-studies.jpg','Business_studies.jpg'],
+ 'economics':['economics.webp'],
+ 'accounting':['accounting.jpg'],
+ 'life sciences':['life-sciences.jpg','life_science.jpg'],
+ 'physics':['physics.webp','teacher-maths-physic.webp'],
+ 'physical sciences':['physics.webp','teacher-maths-physic.webp'],
+ 'technical sciences':['physics.webp','teacher-maths-physic.webp'],
+ 'maths':['maths.webp'],
+ 'mathematical literacy':['maths.webp'],
+ 'technical mathematics':['maths.webp']
 };
+// Each picture is looked for in /images and in the main folder; the ones that exist are drawn.
+const picUrls=files=>files.flatMap(f=>['/images/'+f,'/'+f]).map(u=>'url('+u+')').join(',');
 function addSubjectPics(){try{addSubjectPicsInner()}catch(e){console.error('subject pictures:',e)}}
 function addSubjectPicsInner(){
  if(!/subjects\.html/.test(location.pathname))return;
@@ -76,7 +78,7 @@ function addSubjectPicsInner(){
   if(inside>1)box=el.parentElement;
   if(!box||box.dataset.pic)return;
   box.dataset.pic='1';
-  box.style.backgroundImage='linear-gradient(rgba(15,27,61,.55),rgba(15,27,61,.78)),url(/images/'+pic+')';
+  box.style.backgroundImage='linear-gradient(rgba(15,27,61,.55),rgba(15,27,61,.78)),'+picUrls(pic);
   box.style.backgroundSize='cover';
   box.style.backgroundPosition='center';
   box.style.color='#fff';
