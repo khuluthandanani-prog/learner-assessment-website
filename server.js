@@ -1362,6 +1362,7 @@ async function ensureApps() {
     ALTER TABLE rise_users ADD COLUMN IF NOT EXISTS student_number TEXT, ADD COLUMN IF NOT EXISTS province TEXT, ADD COLUMN IF NOT EXISTS district TEXT, ADD COLUMN IF NOT EXISTS school TEXT, ADD COLUMN IF NOT EXISTS parent_cell TEXT, ADD COLUMN IF NOT EXISTS subjects TEXT[] NOT NULL DEFAULT '{}';
     CREATE UNIQUE INDEX IF NOT EXISTS rise_users_sn ON rise_users(student_number) WHERE student_number IS NOT NULL;
     ALTER TABLE rise_assessments ADD COLUMN IF NOT EXISTS subject TEXT;
+    ALTER TABLE rise_users ADD COLUMN IF NOT EXISTS photo TEXT, ADD COLUMN IF NOT EXISTS bio TEXT, ADD COLUMN IF NOT EXISTS gender TEXT;
     CREATE TABLE IF NOT EXISTS rise_notify_log(
       id TEXT PRIMARY KEY,
       subject TEXT, what TEXT, title TEXT,
@@ -1596,6 +1597,103 @@ app.get('/api/admin/notices', admin, async (req, res) => {
   try {
     const r = await pool.query('SELECT subject,what,title,recipients,sent,failed,note,at FROM rise_notify_log ORDER BY at DESC LIMIT 30');
     res.json({ notices: r.rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ================= STAFF PROFILES (admin, lecturer, junior tutor) =================
+// Picture, description, gender and learner counts. Must stay ABOVE the catch-all route below.
+const GENDERS = ['Female', 'Male', 'Other', 'Prefer not to say'];
+
+app.get('/api/profile/me', staff, async (req, res) => {
+  try {
+    const u = await pool.query(
+      'SELECT id,name,email,role,photo,bio,gender,subjects FROM rise_users WHERE id=$1',
+      [req.user.id]
+    );
+
+    const me = u.rows[0];
+    const all = isAllAccess(me);
+    const mine = all ? SUBJECTS : cleanSubjects(me.subjects);
+
+    // Approved learners per subject
+    const per = await pool.query(
+      `SELECT s AS subject, COUNT(*)::int AS n
+       FROM rise_users u, unnest(u.subjects) AS s
+       WHERE u.role='learner' AND u.status='approved'
+       GROUP BY s`
+    );
+
+    const byName = {};
+    per.rows.forEach(r => { byName[r.subject] = r.n; });
+
+    // Distinct learners across the person's subjects (a learner in two subjects counts once)
+    const tot = all
+      ? await pool.query("SELECT COUNT(*)::int AS n FROM rise_users WHERE role='learner' AND status='approved'")
+      : await pool.query(
+          "SELECT COUNT(*)::int AS n FROM rise_users WHERE role='learner' AND status='approved' AND subjects && $1::text[]",
+          [mine]
+        );
+
+    res.json({
+      name: me.name,
+      email: me.email,
+      role: me.role,
+      photo: me.photo || null,
+      bio: me.bio || '',
+      gender: me.gender || '',
+      genders: GENDERS,
+      subjects: mine.map(s => ({ name: s, learners: byName[s] || 0 })),
+      allSubjects: all,
+      totalLearners: tot.rows[0].n
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.patch('/api/profile/me', staff, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const sets = [];
+    const vals = [req.user.id];
+
+    if (b.bio !== undefined) {
+      vals.push(String(b.bio || '').trim().slice(0, 1000));
+      sets.push('bio=$' + vals.length);
+    }
+
+    if (b.gender !== undefined) {
+      const g = String(b.gender || '');
+      if (g && !GENDERS.includes(g)) {
+        return res.status(400).json({ error: 'Choose a gender from the list.' });
+      }
+      vals.push(g || null);
+      sets.push('gender=$' + vals.length);
+    }
+
+    if (b.photo !== undefined) {
+      if (b.photo === null || b.photo === '') {
+        vals.push(null);
+      } else {
+        const p = String(b.photo);
+        if (!/^data:image\/(jpeg|png|webp);base64,/.test(p)) {
+          return res.status(400).json({ error: 'The picture must be a JPEG, PNG or WebP image.' });
+        }
+        if (p.length > 1500000) {
+          return res.status(400).json({ error: 'The picture is too large. Choose a smaller one.' });
+        }
+        vals.push(p);
+      }
+      sets.push('photo=$' + vals.length);
+    }
+
+    if (!sets.length) return res.status(400).json({ error: 'Nothing to save.' });
+
+    await pool.query('UPDATE rise_users SET ' + sets.join(',') + ' WHERE id=$1', vals);
+
+    res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
