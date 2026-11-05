@@ -7,26 +7,40 @@
 .wrap{overflow-x:auto}
 .note{opacity:.8;font-size:.9rem;margin-top:8px}
 </style></head><body>
-<header class="top"><div class="brand"><span class="logo"></span><div>RISE COLLECTIVE<small>LEARNER PORTAL</small></div></div><div>👤 <span id="who"></span> <button class="btn sm" onclick="logout()">Logout</button></div></header><main>
-<p><a href="learner.html">← Back to home</a></p>
+<header class="top"><div class="brand"><span class="logo"></span><div>RISE COLLECTIVE<small>OVERALL RANKING</small></div></div><div>👤 <span id="who"></span> <button class="btn sm" onclick="logout()">Logout</button></div></header><main>
+<p><a href="#" onclick="history.back();return false">← Back</a></p>
 <h2>🏅 Overall Ranking</h2>
 <p class="note">All learners, all assessments and competition papers together. Score = total marks earned ÷ total marks available.</p>
 <div id="out" class="wrap">Loading…</div>
 </main>
 <script src="app.js"></script><script>
-const u=guard('learner');
-(async()=>{
-  const out=document.getElementById('out');
-  try{
-    const d=await api('/ranking/overall');
-    if(!d.rows.length){out.textContent='No marks yet. The ranking appears once work has been marked.';return}
-    const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-    let h='<table class="rk"><tr><th>#</th><th>Learner</th><th>School</th><th>Score</th><th>%</th></tr>';
-    d.rows.forEach(r=>{
-      h+='<tr class="'+(r.me?'me':'')+'"><td class="pos">'+r.rank+'</td><td>'+esc(r.name)+(r.me?' (you)':'')+'</td><td>'+esc(r.school)+'</td><td>'+r.got+' / '+r.outof+'</td><td>'+r.pct+'%</td></tr>';
-    });
-    h+='</table><p class="note">'+d.total+' learners ranked.</p>';
-    out.innerHTML=h;
-  }catch(e){out.textContent='Could not load the ranking: '+e.message}
-})();
+function findUser(){
+  for(const store of [localStorage,sessionStorage]){
+    for(let i=0;i<store.length;i++){
+      try{const o=JSON.parse(store.getItem(store.key(i)));
+        if(o&&typeof o==='object'&&o.id&&o.role)return o}catch(e){}
+    }
+  }
+  return null;
+}
+const me=findUser();
+if(!me){location.href='index.html'}
+else{
+  document.getElementById('who').textContent=me.name||'';
+  (async()=>{
+    const out=document.getElementById('out');
+    try{
+      const d=await api('/ranking/overall');
+      if(!d.rows.length){out.textContent='No marks yet. The ranking appears once work has been marked.';return}
+      const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+      const staff=!!d.rows[0].email;
+      let h='<table class="rk"><tr><th>#</th><th>Learner</th>'+(staff?'<th>Student no.</th>':'')+'<th>School</th><th>Score</th><th>%</th></tr>';
+      d.rows.forEach(r=>{
+        h+='<tr class="'+(r.me?'me':'')+'"><td class="pos">'+r.rank+'</td><td>'+esc(r.name)+(r.me?' (you)':'')+'</td>'+(staff?'<td>'+esc(r.studentNumber)+'</td>':'')+'<td>'+esc(r.school)+'</td><td>'+r.got+' / '+r.outof+'</td><td>'+r.pct+'%</td></tr>';
+      });
+      h+='</table><p class="note">'+d.total+' learners ranked.</p>';
+      out.innerHTML=h;
+    }catch(e){out.textContent='Could not load the ranking: '+e.message}
+  })();
+}
 </script></body></html>
