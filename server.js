@@ -1309,6 +1309,51 @@ app.get('/api/top-assessments/me', learnerOnly, async (req, res) => {
   }
 });
 
+// ---- Overall ranking of ALL learners (assessments + competition papers), not split by district ----
+// Score = total marks earned / total marks available over every marked item. Learners see the top 10
+// (names shortened) plus their own position; staff see up to 200 with full names, student numbers and emails.
+app.get('/api/ranking/overall', anyUser, async (req, res) => {
+  try {
+    const r = await pool.query(`
+      WITH m AS (
+        SELECT s.user_id, s.mark, a.total
+        FROM rise_submissions s JOIN rise_assessments a ON a.id=s.assessment_id
+        WHERE s.mark IS NOT NULL
+        UNION ALL
+        SELECT s.user_id, s.mark, p.total
+        FROM rise_comp_subs s JOIN rise_comp_papers p ON p.id=s.paper_id
+        WHERE s.mark IS NOT NULL
+      ), sc AS (
+        SELECT u.id, u.name, u.school, u.student_number, u.email,
+               SUM(m.mark)::int AS got, SUM(m.total)::int AS outof, COUNT(*)::int AS n
+        FROM m JOIN rise_users u ON u.id=m.user_id AND u.role='learner' AND u.status='approved'
+        GROUP BY u.id
+      ), rk AS (
+        SELECT *, ROUND(got*100.0/NULLIF(outof,0),1)::float AS pct,
+               RANK() OVER (ORDER BY got*1.0/NULLIF(outof,0) DESC NULLS LAST) AS rank
+        FROM sc
+      )
+      SELECT * FROM rk ORDER BY rank, student_number`);
+    const total = r.rowCount;
+    const staffView = isStaffRole(req.user.role);
+    const shortName = n => { const p = String(n || '').trim().split(/\s+/); return p[0] + (p.length > 1 ? ' ' + p[p.length - 1][0] + '.' : ''); };
+    const rows = r.rows
+      .filter(x => staffView ? Number(x.rank) <= 200 : (Number(x.rank) <= 10 || x.id === req.user.id))
+      .map(x => ({
+        rank: Number(x.rank),
+        name: staffView ? x.name : shortName(x.name),
+        school: x.school,
+        studentNumber: staffView ? x.student_number : undefined,
+        email: staffView ? x.email : undefined,
+        got: x.got, outof: x.outof, pct: x.pct, n: x.n,
+        me: x.id === req.user.id
+      }));
+    res.json({ rows, total });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ---- ADMIN ONLY: registrations, reports and payments ----
 app.get('/api/comp/regs', adminOnly, async (req, res) => {
   try {
