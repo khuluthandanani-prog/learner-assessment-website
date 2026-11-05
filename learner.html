@@ -2,21 +2,26 @@
 <style>
 .pgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:18px;margin-top:14px}
 @media(max-width:600px){.pgrid{grid-template-columns:1fr}.ptile{aspect-ratio:16/10}}
-.ptile{position:relative;display:block;aspect-ratio:1/1;border-radius:14px;overflow:hidden;background:#0f1b3d center/cover no-repeat;text-decoration:none;color:#fff;box-shadow:0 2px 8px rgba(0,0,0,.25)}
-.ptile::after{content:"";position:absolute;inset:0;background:linear-gradient(to top,rgba(10,18,45,.88) 0%,rgba(10,18,45,.35) 45%,rgba(10,18,45,0) 70%)}
+.ptile{position:relative;display:block;aspect-ratio:1/1;border-radius:14px;overflow:hidden;background-size:cover;background-position:center;background-repeat:no-repeat;text-decoration:none;color:#fff;box-shadow:0 2px 8px rgba(0,0,0,.25)}
+.ptile::after{content:"";position:absolute;inset:0;background:linear-gradient(to top,rgba(10,18,45,.85) 0%,rgba(10,18,45,.25) 50%,rgba(10,18,45,0) 75%)}
 .ptile .cap{position:absolute;left:0;right:0;bottom:0;z-index:1;padding:14px}
 .ptile h3{margin:0;color:#fff;font-size:1.2rem}
 .ptile p{margin:3px 0 0;color:#e6e9f2;font-size:.9rem}
 .ptile .cnt{position:absolute;top:10px;right:10px;z-index:1;min-width:30px;padding:3px 9px;border-radius:999px;background:#fff;color:#0f1b3d;font-weight:700;text-align:center}
-.ptile:focus-visible{outline:3px solid #fff;outline-offset:2px}
+.ptile .ico{position:absolute;top:12px;left:14px;z-index:1;font-size:2rem}
+.t1{background-image:url('images/subjects.webp'),linear-gradient(135deg,#1e3a8a,#3b82f6)}
+.t2{background-image:url('images/assessments.webp'),linear-gradient(135deg,#7c2d12,#f97316)}
+.t3{background-image:url('images/marking.webp'),linear-gradient(135deg,#14532d,#22c55e)}
+.t4{background-image:url('images/top_5_district.webp'),linear-gradient(135deg,#581c87,#a855f7)}
+.t5{background-image:url('images/competition.webp'),linear-gradient(135deg,#831843,#ec4899)}
 </style></head><body>
 <header class="top"><div class="brand"><span class="logo"></span><div>RISE COLLECTIVE<small>LEARNER PORTAL</small></div></div><div>👤 <span id="who"></span> <button class="btn sm" onclick="logout()">Logout</button></div></header><main><h2>Welcome</h2>
 <div class="pgrid">
-<a class="ptile" href="subjects.html" style="background-image:url('images/subjects.webp')"><span class="cnt" id="cSubjects">–</span><div class="cap"><h3>My Subjects</h3><p>Notes and videos</p></div></a>
-<a class="ptile" href="learner-assessments.html" style="background-image:url('images/assessments.webp')"><span class="cnt" id="cPending">–</span><div class="cap"><h3>Assessments</h3><p>View and submit your work</p></div></a>
-<a class="ptile" href="learner-marks.html" style="background-image:url('images/marking.webp')"><span class="cnt" id="cMarked">–</span><div class="cap"><h3>My Marks</h3><p>Results and feedback</p></div></a>
-<a class="ptile" href="top5.html" style="background-image:url('images/top_5_district.webp')"><div class="cap"><h3>Top 5 in my District</h3><p>See the leading learners</p></div></a>
-<a class="ptile" href="comp-regs.html" style="background-image:url('images/competition.webp')"><div class="cap"><h3>Competition</h3><p>Register and see details</p></div></a>
+<a class="ptile t1" href="subjects.html"><span class="ico">📚</span><span class="cnt" id="cSubjects">–</span><div class="cap"><h3>My Subjects</h3><p>Notes and videos</p></div></a>
+<a class="ptile t2" href="learner-assessments.html"><span class="ico">📝</span><span class="cnt" id="cPending">–</span><div class="cap"><h3>Assessments</h3><p>View and submit your work</p></div></a>
+<a class="ptile t3" href="learner-marks.html"><span class="ico">✅</span><span class="cnt" id="cMarked">–</span><div class="cap"><h3>My Marks</h3><p>Results and feedback</p></div></a>
+<a class="ptile t4" href="top5.html"><span class="ico">🏆</span><div class="cap"><h3>Top 5 in my District</h3><p>See the leading learners</p></div></a>
+<a class="ptile t5" href="comp-regs.html"><span class="ico">🎯</span><div class="cap"><h3>Competition</h3><p>Register and see details</p></div></a>
 </div></main>
 <script src="app.js"></script><script>
 const u=guard('learner');
