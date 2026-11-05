@@ -51,9 +51,10 @@ const isAllAccess = u => ['admin', 'lecturer'].includes(u.role);
 const canSee = (u, sub) => isAllAccess(u) || cleanSubjects(u.subjects).includes(sub);
 const canPost = (u, sub) => isAllAccess(u) || (u.role === 'tutor' && cleanSubjects(u.subjects).includes(sub));
 
-// Day pass settings (change them in Render > Environment, no code change needed)
-const PASS_PRICE = Number(process.env.PASS_PRICE) > 0 ? Number(process.env.PASS_PRICE) : 10;   // rand
-const PASS_HOURS = parseInt(process.env.PASS_HOURS, 10) > 0 ? parseInt(process.env.PASS_HOURS, 10) : 24;
+// Weekly pass settings (change them in Render > Environment, no code change needed)
+// If PASS_PRICE / PASS_HOURS are set in Render, those values override these defaults.
+const PASS_PRICE = Number(process.env.PASS_PRICE) > 0 ? Number(process.env.PASS_PRICE) : 35;   // rand
+const PASS_HOURS = parseInt(process.env.PASS_HOURS, 10) > 0 ? parseInt(process.env.PASS_HOURS, 10) : 168; // 168 hours = 7 days
 const PAYENV = process.env;
 const PAY_INSTRUCTIONS = PAYENV.PAY_INSTRUCTIONS || [
   PAYENV['POS-NAME'] && 'Account name: ' + PAYENV['POS-NAME'],
@@ -62,10 +63,11 @@ const PAY_INSTRUCTIONS = PAYENV.PAY_INSTRUCTIONS || [
   PAYENV['BRANCH-CODE'] && 'Branch code: ' + PAYENV['BRANCH-CODE'],
   PAYENV['REF-TO-USE'] && 'Reference: ' + PAYENV['REF-TO-USE']
 ].filter(Boolean).join('\n') || 'Ask your lecturer for the payment details.';
-// Sharing report: a learner is flagged when, within one pass period, their videos were opened from
-// this many different internet addresses or different devices/browsers (or more)
-const SHARE_MAX_IPS = parseInt(process.env.SHARE_MAX_IPS, 10) > 0 ? parseInt(process.env.SHARE_MAX_IPS, 10) : 3;
-const SHARE_MAX_DEVICES = parseInt(process.env.SHARE_MAX_DEVICES, 10) > 0 ? parseInt(process.env.SHARE_MAX_DEVICES, 10) : 3;
+// Sharing report: a learner is flagged when, within one pass period (now 7 days), their videos were opened from
+// this many different internet addresses or different devices/browsers (or more).
+// The defaults are 6 because over a whole week honest learners on mobile data change address often.
+const SHARE_MAX_IPS = parseInt(process.env.SHARE_MAX_IPS, 10) > 0 ? parseInt(process.env.SHARE_MAX_IPS, 10) : 6;
+const SHARE_MAX_DEVICES = parseInt(process.env.SHARE_MAX_DEVICES, 10) > 0 ? parseInt(process.env.SHARE_MAX_DEVICES, 10) : 6;
 
 // Learner applications are accepted automatically this many hours after they are submitted
 // (change with AUTO_ACCEPT_HOURS in Render > Environment)
@@ -235,7 +237,7 @@ async function admin(req, res, next) {
   }
 }
 
-// ADMIN ONLY (not lecturers, not tutors): day passes, payments, the sharing report and opening/closing applications
+// ADMIN ONLY (not lecturers, not tutors): weekly passes, payments, the sharing report and opening/closing applications
 async function adminOnly(req, res, next) {
   try {
     const x = await pool.query(
@@ -720,7 +722,7 @@ app.get('/api/resources/:id/file', anyUser, async (req, res) => {
   }
 });
 
-// Video link: staff always; learners ONLY while they have an active day pass
+// Video link: staff always; learners ONLY while they have an active weekly pass
 app.get('/api/resources/:id/video', anyUser, async (req, res) => {
   try {
     const r = await pool.query("SELECT url,subject FROM rise_resources WHERE id=$1 AND type='video'", [req.params.id]);
@@ -733,7 +735,7 @@ app.get('/api/resources/:id/video', anyUser, async (req, res) => {
         [req.user.id]
       );
       if (!p.rowCount)
-        return res.status(403).json({ error: 'Day pass required. Get a day pass to watch videos.' });
+        return res.status(403).json({ error: 'Weekly pass required. Get a weekly pass to watch videos.' });
 
       // Record every time a learner opens a video (used by the sharing report)
       await pool.query(
@@ -795,7 +797,7 @@ app.delete('/api/resources/:id', staff, async (req, res) => {
   }
 });
 
-// ---- Day passes for videos ----
+// ---- Weekly passes for videos ----
 // Pass status for the logged-in learner
 app.get('/api/pass/me', anyUser, async (req, res) => {
   try {
@@ -814,6 +816,7 @@ app.get('/api/pass/me', anyUser, async (req, res) => {
       pending: pen.rowCount ? { reference: pen.rows[0].reference } : null,
       price: PASS_PRICE,
       hours: PASS_HOURS,
+      days: Math.round(PASS_HOURS / 24),
       instructions: PAY_INSTRUCTIONS
     });
   } catch (e) {
@@ -821,7 +824,7 @@ app.get('/api/pass/me', anyUser, async (req, res) => {
   }
 });
 
-// A learner asks for a day pass. It starts only after an admin confirms the payment.
+// A learner asks for a weekly pass. It starts only after an admin confirms the payment.
 app.post('/api/pass/request', anyUser, async (req, res) => {
   try {
     if (isStaffRole(req.user.role))
@@ -831,7 +834,7 @@ app.post('/api/pass/request', anyUser, async (req, res) => {
       "SELECT 1 FROM rise_passes WHERE user_id=$1 AND status='active' AND expires_at>NOW()",
       [req.user.id]
     );
-    if (act.rowCount) return res.status(400).json({ error: 'You already have an active day pass.' });
+    if (act.rowCount) return res.status(400).json({ error: 'You already have an active weekly pass.' });
 
     const pen = await pool.query("SELECT reference FROM rise_passes WHERE user_id=$1 AND status='pending'", [req.user.id]);
     if (pen.rowCount) return res.json({ ok: true, reference: pen.rows[0].reference });
@@ -847,16 +850,16 @@ app.post('/api/pass/request', anyUser, async (req, res) => {
   }
 });
 
-// ADMIN ONLY: see the day pass requests and confirm or reject them
+// ADMIN ONLY: see the weekly pass requests and confirm or reject them
 app.get('/api/admin/passes', adminOnly, async (req, res) => {
   try {
     const r = await pool.query(`
       SELECT p.id,p.reference,p.status,p.amount,p.requested_at AS "requestedAt",p.expires_at AS "expiresAt",u.name,u.email
       FROM rise_passes p JOIN rise_users u ON u.id=p.user_id
-      WHERE p.status='pending' OR (p.status='active' AND p.expires_at>NOW()) OR p.requested_at>NOW()-INTERVAL '7 days'
+      WHERE p.status='pending' OR (p.status='active' AND p.expires_at>NOW()) OR p.requested_at>NOW()-INTERVAL '14 days'
       ORDER BY CASE p.status WHEN 'pending' THEN 0 WHEN 'active' THEN 1 ELSE 2 END, p.requested_at DESC
       LIMIT 200`);
-    res.json({ passes: r.rows, price: PASS_PRICE, hours: PASS_HOURS });
+    res.json({ passes: r.rows, price: PASS_PRICE, hours: PASS_HOURS, days: Math.round(PASS_HOURS / 24) });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -936,7 +939,7 @@ app.patch('/api/admin/sharing/:userId/revoke', adminOnly, async (req, res) => {
 });
 
 // ================= COMPETITIONS (Physics, Accounting, Maths) =================
-const COMP_FEE = Number(process.env.COMP_FEE) > 0 ? Number(process.env.COMP_FEE) : 150; // rand, paid to the same account as day passes
+const COMP_FEE = Number(process.env.COMP_FEE) > 0 ? Number(process.env.COMP_FEE) : 150; // rand, paid to the same account as weekly passes
 
 async function ensureComp() {
   await pool.query(`
