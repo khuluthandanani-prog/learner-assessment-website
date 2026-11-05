@@ -12,4 +12,12 @@
 <header class="top"><div class="brand"><span class="logo"></span><div>RISE COLLECTIVE<small>LEARNER PORTAL</small></div></div><div>👤 <span id="who"></span> <button class="btn sm" onclick="logout()">Logout</button></div></header><main><h2>Welcome</h2>
 <div class="pgrid">
 <a class="ptile" href="subjects.html" style="background-image:url('images/subjects.webp')"><span class="cnt" id="cSubjects">–</span><div class="cap"><h3>My Subjects</h3><p>Notes and videos</p></div></a>
-<a class="ptile" href="learner-assessments.html" style="background-image:url('images/assessments.webp')"><span
+<a class="ptile" href="learner-assessments.html" style="background-image:url('images/assessments.webp')"><span class="cnt" id="cPending">–</span><div class="cap"><h3>Assessments</h3><p>View and submit your work</p></div></a>
+<a class="ptile" href="learner-marks.html" style="background-image:url('images/marking.webp')"><span class="cnt" id="cMarked">–</span><div class="cap"><h3>My Marks</h3><p>Results and feedback</p></div></a>
+</div></main>
+<script src="app.js"></script><script>
+const u=guard('learner');
+(async()=>{try{const d=await api('/learner/data?userId='+encodeURIComponent(u.id));const A=d.assessments,S=d.submissions;
+const marked=S.filter(s=>s.mark!=null).length;$('#cMarked').textContent=marked;$('#cPending').textContent=A.length-marked}catch(e){}})();
+(async()=>{try{const d=await api('/subjects');$('#cSubjects').textContent=d.subjects.length}catch(e){}})();
+</script></body></html>
