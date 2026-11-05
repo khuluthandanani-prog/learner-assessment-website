@@ -284,6 +284,12 @@ async function anyUser(req, res, next) {
 
 const isStaffRole = r => ['admin', 'lecturer', 'tutor'].includes(r);
 
+// True while the learner has a confirmed weekly pass that has not expired.
+// One pass covers BOTH notes and videos. Staff never need a pass.
+const hasActivePass = async uid => (await pool.query(
+  "SELECT 1 FROM rise_passes WHERE user_id=$1 AND status='active' AND expires_at>NOW()", [uid])).rowCount > 0;
+const PASS_NEEDED_MSG = 'Weekly pass required. Get a weekly pass (R' + PASS_PRICE + ') to read notes and watch videos.';
+
 app.get('/api/health', async (req, res) => {
   try {
     await pool.query('SELECT 1');
@@ -704,18 +710,24 @@ app.get('/api/resources', anyUser, async (req, res) => {
       FROM rise_resources r LEFT JOIN rise_users u ON u.id=r.created_by
       WHERE r.subject=$1
       ORDER BY r.created_at DESC`, [sub]);
-    res.json({ resources: r.rows, canPost: canPost(req.user, sub) });
+    // Notes are paid content now: without a pass the notes text is not sent (titles stay visible)
+    const paid = isStaffRole(req.user.role) || await hasActivePass(req.user.id);
+    const rows = r.rows.map(x => (x.type === 'note' && !paid) ? { ...x, desc: '', locked: true } : x);
+    res.json({ resources: rows, canPost: canPost(req.user, sub), hasPass: paid, price: PASS_PRICE });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
-// Download one attached notes file (notes stay free)
+// Attached notes file: staff always; learners ONLY while they have an active weekly pass
 app.get('/api/resources/:id/file', anyUser, async (req, res) => {
   try {
     const r = await pool.query('SELECT subject,file_name,file_data FROM rise_resources WHERE id=$1', [req.params.id]);
     if (!r.rowCount || !r.rows[0].file_data) return res.status(404).json({ error: 'File not found.' });
     if (!canSee(req.user, r.rows[0].subject)) return res.status(403).json({ error: 'You are not registered for this subject.' });
+    if (!isStaffRole(req.user.role) && !(await hasActivePass(req.user.id)))
+      return res.status(403).json({ error: PASS_NEEDED_MSG });
+    res.set('Cache-Control', 'no-store');
     res.json({ name: r.rows[0].file_name, data: r.rows[0].file_data });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -735,7 +747,7 @@ app.get('/api/resources/:id/video', anyUser, async (req, res) => {
         [req.user.id]
       );
       if (!p.rowCount)
-        return res.status(403).json({ error: 'Weekly pass required. Get a weekly pass to watch videos.' });
+        return res.status(403).json({ error: PASS_NEEDED_MSG });
 
       // Record every time a learner opens a video (used by the sharing report)
       await pool.query(
