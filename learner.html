@@ -1,11 +1,12 @@
 <!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Learner | RISE COLLECTIVE</title><link rel="stylesheet" href="style.css"><link rel="stylesheet" href="tiles.css">
 <style>
-.pgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:14px;margin-top:12px}
+.pgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:18px;margin-top:14px}
+@media(max-width:600px){.pgrid{grid-template-columns:1fr}.ptile{aspect-ratio:16/10}}
 .ptile{position:relative;display:block;aspect-ratio:1/1;border-radius:14px;overflow:hidden;background:#0f1b3d center/cover no-repeat;text-decoration:none;color:#fff;box-shadow:0 2px 8px rgba(0,0,0,.25)}
 .ptile::after{content:"";position:absolute;inset:0;background:linear-gradient(to top,rgba(10,18,45,.88) 0%,rgba(10,18,45,.35) 45%,rgba(10,18,45,0) 70%)}
-.ptile .cap{position:absolute;left:0;right:0;bottom:0;z-index:1;padding:12px}
-.ptile h3{margin:0;color:#fff;font-size:1.05rem}
-.ptile p{margin:2px 0 0;color:#e6e9f2;font-size:.82rem}
+.ptile .cap{position:absolute;left:0;right:0;bottom:0;z-index:1;padding:14px}
+.ptile h3{margin:0;color:#fff;font-size:1.2rem}
+.ptile p{margin:3px 0 0;color:#e6e9f2;font-size:.9rem}
 .ptile .cnt{position:absolute;top:10px;right:10px;z-index:1;min-width:30px;padding:3px 9px;border-radius:999px;background:#fff;color:#0f1b3d;font-weight:700;text-align:center}
 .ptile:focus-visible{outline:3px solid #fff;outline-offset:2px}
 </style></head><body>
