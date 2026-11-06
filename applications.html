@@ -11,14 +11,14 @@
  </table>
 </div>
 
-<p>Open the documents, check them, then accept or reject. Learners are accepted automatically <b id="ah">24</b> hours after they apply, unless you accept or reject them first. Tutor applications always need you to accept them. Fix a spelling with <b>Edit location</b> (learners) or <b>Edit schools</b> (tutors). Learners only see the notes, videos and assessments of the tutor who teaches at their school, so the school names must match.</p>
+<p>Open the documents, check them, then accept or reject. For learners, press <b>Parent selfie</b> to look at the parent's photo before accepting. Learners are accepted automatically <b id="ah">24</b> hours after they apply, unless you accept or reject them first. Tutor applications always need you to accept them. Fix a spelling with <b>Edit location</b> (learners) or <b>Edit schools</b> (tutors). Learners only see the notes, videos and assessments of the tutor who teaches at their school, so the school names must match.</p>
 <label>Show: <select id="flt" onchange="draw()"><option value="all">All</option><option value="pending">Waiting for a decision</option><option value="learner">Learners</option><option value="tutor">Tutors</option></select></label>
 <div id="list"></div>
 </main>
 <script src="app.js"></script><script>
 const u=guard('admin');if(u&&u.role==='tutor')location.href='lecturer.html';
 let D=[],SUBJ=[],ST={learner:true,tutor:true},MAXS=2;
-const KEY={report:'Report',matric:'Matric',transcript:'Transcript',idcopy:'ID copy'};
+const KEY={report:'Report',matric:'Matric',transcript:'Transcript',idcopy:'ID copy',selfie:'Parent selfie'};
 api('/apply/subjects').then(d=>{SUBJ=d.subjects;if(d.maxTutorSchools)MAXS=d.maxTutorSchools}).catch(()=>{});
 
 // Open / close box (admin only)
@@ -79,8 +79,25 @@ function draw(){
  :'<p class="m">No applications.</p>'
 }
 
+// Shows the parent selfie on screen (press anywhere to close)
+function showPhoto(d){
+ const o=document.createElement('div');
+ o.style.cssText='position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.8);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:16px';
+ const img=document.createElement('img');
+ img.src=d.data;img.alt='Parent selfie';
+ img.style.cssText='max-width:92vw;max-height:80vh;border-radius:12px;background:#fff';
+ const b=document.createElement('button');
+ b.className='btn';b.textContent='Close';
+ o.appendChild(img);o.appendChild(b);
+ o.onclick=()=>o.remove();
+ document.body.appendChild(o);
+}
 async function dl(id,key){
- try{const d=await api('/admin/applications/'+id+'/doc/'+key);const a=document.createElement('a');a.href=d.data;a.download=d.name;document.body.appendChild(a);a.click();a.remove()}
+ try{
+  const d=await api('/admin/applications/'+id+'/doc/'+key);
+  if(key==='selfie'){showPhoto(d);return}
+  const a=document.createElement('a');a.href=d.data;a.download=d.name;document.body.appendChild(a);a.click();a.remove()
+ }
  catch(e){alert(e.message)}
 }
 async function call(id,body){
