@@ -79,6 +79,28 @@
 <label>SA ID number (13 digits)</label>
 <input name="idn" inputmode="numeric" maxlength="13" pattern="[0-9]{13}" required>
 <label>Subject you are applying for</label><div id="tsub"></div>
+
+<label>Province where you will tutor</label>
+<select name="prov" required>
+<option value="">Choose…</option>
+<option>Eastern Cape</option><option>Free State</option><option>Gauteng</option>
+<option>KwaZulu-Natal</option><option>Limpopo</option><option>Mpumalanga</option>
+<option>Northern Cape</option><option>North West</option><option>Western Cape</option>
+</select>
+
+<label>District where you will tutor</label>
+<input name="dist" placeholder="e.g. Ngaka Modiri Molema" required>
+
+<label>School you will tutor at</label>
+<input name="school1" placeholder="Full school name" required>
+
+<div id="school2Box">
+<label>Second school (optional)</label>
+<input name="school2" placeholder="Full school name, if you will tutor at a second school">
+</div>
+
+<p class="m">Write each school name in full, the same way the learners write it on their applications. Learners will only see the notes, videos and assessments of the tutor who teaches at their school.</p>
+
 <label>Matric certificate (max 1.5MB)</label><input name="matric" type="file" required>
 <label>Academic transcript (max 1.5MB)</label><input name="trans" type="file" required>
 <label>Copy of your ID (max 1.5MB)</label><input name="idc" type="file" required>
@@ -129,6 +151,9 @@ api('/apply/subjects').then(d => {
 
   $('#lsub').innerHTML = h;
   $('#tsub').innerHTML = h;
+
+  // If the server allows only one school per tutor, hide the second school box
+  if (d.maxTutorSchools && d.maxTutorSchools < 2) $('#school2Box').hidden = true;
 }).catch(() => {});
 
 const picked = form =>
@@ -226,6 +251,15 @@ $('#tf2').onsubmit = async e => {
 
   if (!subs.length) return alert('Choose the subject you are applying for.');
 
+  // One school is required; the second is optional
+  const schools = [f.school1.value, f.school2.value]
+    .map(s => s.replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+
+  if (!f.prov.value) return alert('Choose the province where you will tutor.');
+  if (!f.dist.value.trim()) return alert('Enter the district where you will tutor.');
+  if (!schools.length) return alert('Enter the school you will tutor at.');
+
   let m, t, i;
 
   try {
@@ -247,6 +281,9 @@ $('#tf2').onsubmit = async e => {
         cell: f.cell.value,
         saId: f.idn.value,
         subjects: subs,
+        province: f.prov.value,
+        district: f.dist.value,
+        schools: schools,
         matric: m,
         transcript: t,
         idCopy: i
