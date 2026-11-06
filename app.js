@@ -90,3 +90,13 @@ document.addEventListener('DOMContentLoaded',addSubjectPics);
 window.addEventListener('load',addSubjectPics);
 // The subject boxes are drawn after the page loads, so look again for a few seconds (subjects page only)
 if(/subjects\.html/.test(location.pathname)){let n=0;const t=setInterval(()=>{addSubjectPics();if(++n>=20)clearInterval(t)},500)}
+
+// Parent logins are view-only: show a banner and switch off buttons that add or change anything.
+// (The server also refuses every change made by a parent.)
+function parentView(){
+ const u=session();if(!u||!u.parent)return;
+ if(!$('#parentBar')&&document.body){const b=document.createElement('div');b.id='parentBar';b.style.cssText='background:#c9a227;color:#0f1b3d;text-align:center;padding:6px 10px;font-weight:600;font-size:.9rem';b.textContent='Parent view: you can look, but not change anything.';document.body.prepend(b)}
+ $$('button,input[type=submit],input[type=file]').forEach(b=>{if(b.closest('header'))return;const t=(b.textContent||b.value||'').trim();if(b.type==='file'||/\b(submit|register|request|upload|send|pay|save|delete|add|post|mark)/i.test(t)){b.disabled=true;b.title='Parents have view-only access'}});
+}
+document.addEventListener('DOMContentLoaded',parentView);window.addEventListener('load',parentView);
+setInterval(parentView,1500);
