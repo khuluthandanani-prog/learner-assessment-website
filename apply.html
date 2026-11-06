@@ -65,7 +65,18 @@
 <label>Report from the previous grade (max 1.5MB)</label>
 <input name="rep" type="file" required>
 
-<p class="m">By applying you agree that RISE COLLECTIVE may keep these details and documents for the application and may contact the parent on WhatsApp, including about new notes, videos and assessments in the chosen subjects.</p>
+<label>Parent / guardian selfie</label>
+<input name="selfie" id="selfie" type="file" accept="image/*" required>
+<img id="selfiePrev" alt="Selfie preview" hidden style="display:none;width:120px;height:120px;object-fit:cover;border-radius:50%;margin-top:8px;border:2px solid #999">
+<p class="m">On a phone you can take the photo with the camera or choose one from your gallery. Show the parent's face clearly. Only RISE COLLECTIVE staff can see this photo. It is never shown to learners.</p>
+
+<label>Parent / guardian password (at least 6 characters)</label>
+<input name="ppass" type="password" minlength="6" autocomplete="new-password" required>
+<label>Confirm the parent password</label>
+<input name="ppass2" type="password" minlength="6" autocomplete="new-password" required>
+<p class="m">The parent logs in with the learner's student number and this password. A parent can look at the learner's subjects, notes, videos, assessments, marks and rankings, but cannot change anything.</p>
+
+<p class="m">By applying you agree that RISE COLLECTIVE may keep these details, documents and the parent selfie for the application and may contact the parent on WhatsApp, including about new notes, videos and assessments in the chosen subjects.</p>
 <button class="btn">Submit application</button>
 </form>
 </div>
@@ -159,6 +170,37 @@ api('/apply/subjects').then(d => {
 const picked = form =>
   [...form.querySelectorAll('input[name=subj]:checked')].map(x => x.value);
 
+// Shrinks a photo to at most 900 pixels and saves it as a JPEG, so a big phone photo uploads quickly
+function compressImage(file, max = 900, quality = 0.75) {
+  return new Promise((res, rej) => {
+    if (!file) return res(null);
+    if (!/^image\//.test(file.type)) return rej('The selfie must be a photo (JPEG, PNG or WebP).');
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const s = Math.min(1, max / Math.max(img.width, img.height));
+      const c = document.createElement('canvas');
+      c.width = Math.round(img.width * s);
+      c.height = Math.round(img.height * s);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      res({ name: 'parent-selfie.jpg', data: c.toDataURL('image/jpeg', quality) });
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); rej('Could not read that photo. Please try another one.'); };
+    img.src = url;
+  });
+}
+
+// Small round preview of the chosen selfie
+$('#selfie').onchange = () => {
+  const p = $('#selfiePrev');
+  const f = $('#selfie').files[0];
+  if (!f || !/^image\//.test(f.type)) { p.hidden = true; p.style.display = 'none'; return; }
+  p.src = URL.createObjectURL(f);
+  p.hidden = false;
+  p.style.display = 'block';
+};
+
 $$('.tile[data-f]').forEach(t => {
   t.onclick = e => {
     e.preventDefault();
@@ -192,7 +234,10 @@ $('#lf2').onsubmit = async e => {
 
   if (!subs.length) return alert('Choose at least one subject.');
 
-  let rep;
+  if (f.ppass.value.length < 6) return alert('The parent password must be at least 6 characters.');
+  if (f.ppass.value !== f.ppass2.value) return alert('The two parent passwords do not match.');
+
+  let rep, selfie;
 
   try {
     rep = await readFile(f.rep.files[0]);
@@ -201,6 +246,14 @@ $('#lf2').onsubmit = async e => {
   }
 
   if (!rep) return alert('Upload the report from the previous grade.');
+
+  try {
+    selfie = await compressImage(f.selfie.files[0]);
+  } catch (x) {
+    return alert(x);
+  }
+
+  if (!selfie) return alert('Take or upload the parent selfie.');
 
   try {
     const x = await api('/apply/learner', {
@@ -214,12 +267,15 @@ $('#lf2').onsubmit = async e => {
         subjects: subs,
         parentCell: f.cell.value,
         saId: f.idn.value,
-        report: rep
+        report: rep,
+        parentSelfie: selfie,
+        parentPassword: f.ppass.value
       })
     });
 
     $('#lc').hidden = true;
     e.target.reset();
+    $('#selfiePrev').style.display = 'none';
 
     const r = $('#res');
     r.hidden = false;
@@ -229,6 +285,7 @@ $('#lf2').onsubmit = async e => {
       '<div style="font-size:2.2rem;font-weight:700;letter-spacing:2px;color:#111">' +
       esc(x.studentNumber) + '</div>' +
       '<p><b>Write this number down.</b> You log in with it. Your application is accepted after review (or automatically after ' + esc(x.autoAcceptHours) + ' hours). Then press <b>Register</b> on the login page and use this student number.</p>' +
+      '<p>The parent logs in with this same student number and the parent password chosen on this form.</p>' +
       '<a class="btn" href="index.html?register">Go to Register</a>';
 
     r.scrollIntoView({ behavior: 'smooth' });
