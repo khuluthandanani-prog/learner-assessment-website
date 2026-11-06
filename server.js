@@ -1573,8 +1573,8 @@ app.post('/api/apply/learner', async (req, res) => {
     if (!waNumber(cell)) return res.status(400).json({ error: 'Enter a valid South African cell number for the parent, for example 082 123 4567.' });
     if (!validSaId(saId)) return res.status(400).json({ error: 'The SA ID number is not valid. It must be 13 digits.' });
     if (!okFile(report)) return res.status(400).json({ error: 'Upload the report from the previous grade.' });
-    if (parentPass && parentPass.length < 6) return res.status(400).json({ error: 'The parent password must be 6 or more characters.' });
-    if (selfie && !(okFile(selfie) && /^data:image\/(jpeg|png|webp);base64,/.test(selfie.data))) return res.status(400).json({ error: 'The parent selfie must be a JPEG, PNG or WebP photo.' });
+    if (parentPass.length < 6) return res.status(400).json({ error: 'The parent password must be 6 or more characters.' });
+    if (!(okFile(selfie) && /^data:image\/(jpeg|png|webp);base64,/.test(selfie.data))) return res.status(400).json({ error: 'Take or upload the parent selfie (a JPEG, PNG or WebP photo).' });
 
     const ex = await pool.query("SELECT status FROM rise_applications WHERE type='learner' AND sa_id=$1", [saId]);
     if (ex.rowCount && ex.rows[0].status !== 'rejected')
@@ -1588,8 +1588,8 @@ app.post('/api/apply/learner', async (req, res) => {
       [id(), name, cell.slice(0, 30), saId, grade, sn, JSON.stringify({ report: { name: report.name, data: report.data } }), province, district, school, subjects]
     );
     // Parent password (stored scrambled/hashed) and parent selfie (kept with the documents, admins and lecturers only)
-    if (parentPass) await pool.query('UPDATE rise_applications SET parent_hash=$2 WHERE student_number=$1', [sn, await bcrypt.hash(parentPass, 12)]);
-    if (selfie) await pool.query('UPDATE rise_applications SET docs = docs || $2::jsonb WHERE student_number=$1', [sn, JSON.stringify({ selfie: { name: selfie.name, data: selfie.data } })]);
+    await pool.query('UPDATE rise_applications SET parent_hash=$2 WHERE student_number=$1', [sn, await bcrypt.hash(parentPass, 12)]);
+    await pool.query('UPDATE rise_applications SET docs = docs || $2::jsonb WHERE student_number=$1', [sn, JSON.stringify({ selfie: { name: selfie.name, data: selfie.data } })]);
     res.json({ ok: true, studentNumber: sn, autoAcceptHours: AUTO_ACCEPT_HOURS });
   } catch (e) {
     res.status(500).json({ error: e.message });
