@@ -23,6 +23,26 @@ app.get('/robots.txt', (req, res) => {
 
 app.use(express.static(__dirname));
 
+// ---- Parent logins are VIEW-ONLY ----
+// A parent logs in with a private token (it starts with p_). The server looks up the child and refuses anything that changes data.
+async function parentGate(req, res, next) {
+  try {
+    const t = String(req.headers['x-admin-id'] || '');
+    if (!t.startsWith('p_')) return next();
+    const r = await pool.query("SELECT id FROM rise_users WHERE parent_token=$1 AND role='learner'", [t]);
+    if (!r.rowCount) return res.status(403).json({ error: 'Please log in again.' });
+    if (req.method !== 'GET' && req.method !== 'HEAD')
+      return res.status(403).json({ error: 'Parents have view-only access.' });
+    req.isParent = true;
+    req.parentLearnerId = r.rows[0].id;
+    req.headers['x-admin-id'] = r.rows[0].id;
+    next();
+  } catch (e) {
+    next(e);
+  }
+}
+app.use('/api', parentGate);
+
 const id = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
 // All school subjects except the languages.
@@ -281,34 +301,15 @@ async function staff(req, res, next) {
   }
 }
 
-// ---- Parent accounts ----
-// A parent logs in with the child's student number and the parent's own password. Their session id is
-// 'P_' + a secret token that belongs to that learner. It shows exactly what the learner sees, but it is VIEW ONLY:
-// every request that changes something is refused, except asking for a weekly pass (parents usually pay for it).
-// Parent sessions are never written to the video sharing log.
-const PARENT_PREFIX = 'P_';
-async function actingId(raw) {
-  raw = String(raw || '');
-  if (!raw.startsWith(PARENT_PREFIX)) return { uid: raw, parent: false };
-  const r = await pool.query(
-    "SELECT id FROM rise_users WHERE parent_token=$1 AND role='learner' AND status='approved'", [raw.slice(PARENT_PREFIX.length)]);
-  return r.rowCount ? { uid: r.rows[0].id, parent: true } : { uid: '', parent: false };
-}
-const parentBlocked = (req, a) => a.parent && req.method !== 'GET' && !(req.method === 'POST' && req.path === '/api/pass/request');
-const PARENT_VIEW_MSG = 'Parents can view only. The learner submits their own work.';
-
-// Any approved user: learners, parents (as the learner), tutors, lecturers, admins
+// Any approved user: learners, tutors, lecturers, admins
 async function anyUser(req, res, next) {
   try {
-    const a = await actingId(req.headers['x-admin-id']);
-    if (parentBlocked(req, a)) return res.status(403).json({ error: PARENT_VIEW_MSG });
     const x = await pool.query(
       "SELECT id,role,subjects,province,district,school FROM rise_users WHERE id=$1 AND status='approved'",
-      [a.uid]
+      [req.headers['x-admin-id']]
     );
     if (!x.rowCount) return res.status(403).json({ error: 'Please log in again.' });
     req.user = x.rows[0];
-    req.isParent = a.parent;
     next();
   } catch (e) {
     next(e);
@@ -339,7 +340,6 @@ app.get('/api/health', async (req, res) => {
 
 // Register.
 // Learners: need the student number from an ACCEPTED application, then the account is approved at once.
-//   The parent password chosen on the application becomes the parent's login for this learner.
 // Lecturers: role:'lecturer' + code matching LECTURER_CODE, approved immediately.
 // Junior tutors: the email of an ACCEPTED tutor application (approved at once),
 //   or the old role:'tutor' + TUTOR_CODE route (pending until an admin/lecturer approves).
@@ -364,7 +364,7 @@ app.post('/api/auth/register', async (req, res) => {
     let upgradeId = null;
     let appId = null;
     let studentNo = null;
-    let extra = { province: null, district: null, school: null, parentCell: null, subjects: [], schools: [], parentHash: null };
+    let extra = { province: null, district: null, school: null, parentCell: null, subjects: [], schools: [] };
 
     if (role === 'lecturer') {
       if (!process.env.LECTURER_CODE || code !== process.env.LECTURER_CODE)
@@ -422,7 +422,7 @@ app.post('/api/auth/register', async (req, res) => {
       appId = a.id;
       studentNo = sn;
       status = 'approved';
-      extra = { province: a.province, district: a.district, school: a.school, parentCell: a.cell, subjects: a.subjects || [], schools: [], parentHash: a.parent_hash || null };
+      extra = { province: a.province, district: a.district, school: a.school, parentCell: a.cell, subjects: a.subjects || [], parentHash: a.parent_hash || null };
     }
 
     const uid = upgradeId || id();
@@ -442,10 +442,9 @@ app.post('/api/auth/register', async (req, res) => {
         await pool.query("UPDATE rise_users SET role='admin',status='approved' WHERE id=$1", [upgradeId]);
       } else {
         await pool.query(
-          'INSERT INTO rise_users(id,name,email,password_hash,role,status,student_number,province,district,school,parent_cell,subjects,schools,parent_hash,parent_token) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)',
+          'INSERT INTO rise_users(id,name,email,password_hash,role,status,student_number,province,district,school,parent_cell,subjects,schools,parent_hash) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)',
           [uid, name.trim(), email, await bcrypt.hash(password, 12), newRole, status, studentNo,
-           extra.province, extra.district, extra.school, extra.parentCell, extra.subjects, extra.schools || [],
-           extra.parentHash || null, extra.parentHash ? crypto.randomBytes(18).toString('hex') : null]
+           extra.province, extra.district, extra.school, extra.parentCell, extra.subjects, extra.schools || [], extra.parentHash || null]
         );
       }
     } catch (err) {
@@ -469,7 +468,7 @@ app.get('/api/auth/options', async (req, res) => {
 });
 
 // Login. Learners use their 10-digit student number; staff use their email.
-// A PARENT uses the child's student number with the parent's own password (view-only access).
+// A parent uses the child's student number with the PARENT password (view-only access).
 // On failure the response has { error } and NO user.
 app.post('/api/auth/login', async (req, res) => {
   try {
@@ -481,12 +480,10 @@ app.post('/api/auth/login', async (req, res) => {
     if (!r.rowCount) return res.status(401).json({ error: 'Wrong student number, email or password.' });
 
     const u = r.rows[0];
-    const given = req.body.password || '';
-    let asParent = false;
-    if (!(await bcrypt.compare(given, u.password_hash))) {
-      if (isSn && u.role === 'learner' && u.parent_hash && (await bcrypt.compare(given, u.parent_hash))) asParent = true;
-      else return res.status(401).json({ error: 'Wrong student number, email or password.' });
-    }
+    let isParent = false;
+    if (isSn && u.role === 'learner' && u.parent_hash && !(await bcrypt.compare(req.body.password || '', u.password_hash)) && await bcrypt.compare(req.body.password || '', u.parent_hash)) isParent = true;
+    if (!isParent && !(await bcrypt.compare(req.body.password || '', u.password_hash)))
+      return res.status(401).json({ error: 'Wrong student number, email or password.' });
     if (!isSn && u.role === 'learner' && u.student_number)
       return res.status(403).json({ error: 'Learners log in with their student number, not their email.' });
     if (u.status === 'pending')
@@ -494,15 +491,14 @@ app.post('/api/auth/login', async (req, res) => {
     if (u.status === 'blocked')
       return res.status(403).json({ error: 'Your account has been blocked.' });
 
-    if (asParent) {
-      let token = u.parent_token;
-      if (!token) {
-        token = crypto.randomBytes(18).toString('hex');
-        await pool.query('UPDATE rise_users SET parent_token=$2 WHERE id=$1', [u.id, token]);
+    if (isParent) {
+      let tok = u.parent_token;
+      if (!tok) {
+        tok = 'p_' + crypto.randomBytes(24).toString('hex');
+        await pool.query('UPDATE rise_users SET parent_token=$2 WHERE id=$1', [u.id, tok]);
       }
-      return res.json({ user: { id: PARENT_PREFIX + token, name: 'Parent of ' + u.name, email: u.email, role: 'learner', parent: true } });
+      return res.json({ user: { id: tok, name: 'Parent of ' + u.name, email: u.email, role: 'learner', parent: true } });
     }
-
     await pool.query('UPDATE rise_users SET last_login=NOW() WHERE id=$1', [u.id]);
     res.json({ user: { id: u.id, name: u.name, email: u.email, role: u.role } });
   } catch (e) {
@@ -525,6 +521,26 @@ app.get('/api/subjects', anyUser, async (req, res) => {
     res.json({
       subjects: mine.map(s => ({ name: s, notes: (cnt[s] && cnt[s].note) || 0, videos: (cnt[s] && cnt[s].video) || 0 }))
     });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// The junior tutors who teach this subject at the learner's own school (shown at the top right of the subject page).
+// Only name, picture and description are sent, never email or ID.
+app.get('/api/subject-tutors', anyUser, async (req, res) => {
+  try {
+    const sub = cleanSubjects([req.query.subject])[0];
+    if (!sub) return res.status(400).json({ error: 'Unknown subject.' });
+    if (!canSee(req.user, sub)) return res.status(403).json({ error: 'You are not registered for this subject.' });
+    if (req.user.role !== 'learner') return res.json({ tutors: [] });
+    const r = await pool.query(
+      `SELECT name,photo,bio FROM rise_users
+       WHERE role='tutor' AND status='approved' AND $1 = ANY(subjects)
+         AND rise_tutor_covers(id,$2,$3,$4)
+       ORDER BY name`,
+      [sub, req.user.province, req.user.district, req.user.school]);
+    res.json({ tutors: r.rows.map(x => ({ name: x.name, photo: x.photo || null, bio: x.bio || '', subject: sub })) });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -568,8 +584,7 @@ app.get('/api/admin/data', staff, async (req, res) => {
 
 app.get('/api/learner/data', async (req, res) => {
   try {
-    // The learner passes their own id; a parent passes their parent session id, which resolves to the same learner
-    const uid = (await actingId(req.query.userId)).uid;
+    const uid = req.parentLearnerId || req.query.userId;
     const u = await pool.query("SELECT status,subjects,province,district,school FROM rise_users WHERE id=$1 AND role='learner'", [uid]);
     if (!u.rowCount || u.rows[0].status !== 'approved')
       return res.status(403).json({ error: 'Account not approved' });
@@ -629,8 +644,7 @@ app.delete('/api/assessments/:id', staff, async (req, res) => {
   }
 });
 
-// Submissions are refused automatically once the deadline has passed.
-// A parent session id matches no learner here, so parents can never submit.
+// Submissions are refused automatically once the deadline has passed
 app.post('/api/submissions', async (req, res) => {
   try {
     const { uid, aid, text, file } = req.body;
@@ -708,15 +722,15 @@ app.patch('/api/admin/users/:id/password', admin, async (req, res) => {
   }
 });
 
-// Set or reset the PARENT password of a learner (admins and lecturers).
-// A new secret token is made too, so any parent who is already logged in is signed out.
+// Set or reset the PARENT password of a learner (admins and lecturers). The parent logs in with the student number and this password.
+// Clearing parent_token signs out any parent who is already logged in.
 app.patch('/api/admin/users/:id/parent-password', admin, async (req, res) => {
   try {
     if (!req.body.password || req.body.password.length < 6)
       return res.status(400).json({ error: 'Password must be 6+ characters' });
     const r = await pool.query(
-      "UPDATE rise_users SET parent_hash=$1,parent_token=$3 WHERE id=$2 AND role='learner'",
-      [await bcrypt.hash(req.body.password, 12), req.params.id, crypto.randomBytes(18).toString('hex')]
+      "UPDATE rise_users SET parent_hash=$1,parent_token=NULL WHERE id=$2 AND role='learner'",
+      [await bcrypt.hash(req.body.password, 12), req.params.id]
     );
     if (!r.rowCount) return res.status(404).json({ error: 'Learner not found.' });
     res.json({ ok: true });
@@ -859,14 +873,12 @@ app.get('/api/resources/:id/video', anyUser, async (req, res) => {
       if (!p.rowCount)
         return res.status(403).json({ error: PASS_NEEDED_MSG });
 
-      // Record every time a learner opens a video (used by the sharing report).
-      // A parent watching is not logged, so a parent on another phone never flags the learner for sharing.
-      if (!req.isParent) {
-        await pool.query(
-          'INSERT INTO rise_video_log(id,user_id,resource_id,ip,ua) VALUES($1,$2,$3,$4,$5)',
-          [id(), req.user.id, req.params.id, String(req.ip || '').slice(0, 64), String(req.headers['user-agent'] || '').slice(0, 200)]
-        );
-      }
+      // Record every time a learner opens a video (used by the sharing report)
+      if (req.isParent) return res.json({ url: r.rows[0].url });
+      await pool.query(
+        'INSERT INTO rise_video_log(id,user_id,resource_id,ip,ua) VALUES($1,$2,$3,$4,$5)',
+        [id(), req.user.id, req.params.id, String(req.ip || '').slice(0, 64), String(req.headers['user-agent'] || '').slice(0, 200)]
+      );
     }
     res.json({ url: r.rows[0].url });
   } catch (e) {
@@ -949,7 +961,7 @@ app.get('/api/pass/me', anyUser, async (req, res) => {
   }
 });
 
-// A learner (or the parent) asks for a weekly pass. It starts only after an admin confirms the payment.
+// A learner asks for a weekly pass. It starts only after an admin confirms the payment.
 app.post('/api/pass/request', anyUser, async (req, res) => {
   try {
     if (isStaffRole(req.user.role))
@@ -1107,18 +1119,15 @@ async function ensureComp() {
   `);
 }
 
-// Approved learners only (a parent session resolves to the learner, view-only)
+// Approved learners only
 async function learnerOnly(req, res, next) {
   try {
-    const a = await actingId(req.headers['x-admin-id']);
-    if (parentBlocked(req, a)) return res.status(403).json({ error: PARENT_VIEW_MSG });
     const x = await pool.query(
       "SELECT id,name FROM rise_users WHERE id=$1 AND role='learner' AND status='approved'",
-      [a.uid]
+      [req.headers['x-admin-id']]
     );
     if (!x.rowCount) return res.status(403).json({ error: 'Learners only. Please log in again.' });
     req.user = x.rows[0];
-    req.isParent = a.parent;
     next();
   } catch (e) {
     next(e);
@@ -1425,51 +1434,6 @@ app.get('/api/top-assessments/me', learnerOnly, async (req, res) => {
   }
 });
 
-// ---- Overall ranking of ALL learners (assessments + competition papers), not split by district ----
-// Score = total marks earned / total marks available over every marked item. Learners see the top 10
-// (names shortened) plus their own position; staff see up to 200 with full names, student numbers and emails.
-app.get('/api/ranking/overall', anyUser, async (req, res) => {
-  try {
-    const r = await pool.query(`
-      WITH m AS (
-        SELECT s.user_id, s.mark, a.total
-        FROM rise_submissions s JOIN rise_assessments a ON a.id=s.assessment_id
-        WHERE s.mark IS NOT NULL
-        UNION ALL
-        SELECT s.user_id, s.mark, p.total
-        FROM rise_comp_subs s JOIN rise_comp_papers p ON p.id=s.paper_id
-        WHERE s.mark IS NOT NULL
-      ), sc AS (
-        SELECT u.id, u.name, u.school, u.student_number, u.email,
-               SUM(m.mark)::int AS got, SUM(m.total)::int AS outof, COUNT(*)::int AS n
-        FROM m JOIN rise_users u ON u.id=m.user_id AND u.role='learner' AND u.status='approved'
-        GROUP BY u.id
-      ), rk AS (
-        SELECT *, ROUND(got*100.0/NULLIF(outof,0),1)::float AS pct,
-               RANK() OVER (ORDER BY got*1.0/NULLIF(outof,0) DESC NULLS LAST) AS rank
-        FROM sc
-      )
-      SELECT * FROM rk ORDER BY rank, student_number`);
-    const total = r.rowCount;
-    const staffView = isStaffRole(req.user.role);
-    const shortName = n => { const p = String(n || '').trim().split(/\s+/); return p[0] + (p.length > 1 ? ' ' + p[p.length - 1][0] + '.' : ''); };
-    const rows = r.rows
-      .filter(x => staffView ? Number(x.rank) <= 200 : (Number(x.rank) <= 10 || x.id === req.user.id))
-      .map(x => ({
-        rank: Number(x.rank),
-        name: staffView ? x.name : shortName(x.name),
-        school: x.school,
-        studentNumber: staffView ? x.student_number : undefined,
-        email: staffView ? x.email : undefined,
-        got: x.got, outof: x.outof, pct: x.pct, n: x.n,
-        me: x.id === req.user.id
-      }));
-    res.json({ rows, total });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
 // ---- ADMIN ONLY: registrations, reports and payments ----
 app.get('/api/comp/regs', adminOnly, async (req, res) => {
   try {
@@ -1510,7 +1474,8 @@ app.patch('/api/comp/regs/:id', adminOnly, async (req, res) => {
 
 // ================= APPLICATIONS (learners and junior tutors) =================
 const GRADES = ['8', '9', '10', '11', '12'];
-const DOC_KEYS = ['report', 'matric', 'transcript', 'idcopy', 'parentselfie'];
+// 'selfie' is the parent selfie: only admins and lecturers can open it (through the document route below)
+const DOC_KEYS = ['report', 'matric', 'transcript', 'idcopy', 'selfie'];
 
 async function ensureApps() {
   await pool.query(`
@@ -1546,10 +1511,9 @@ async function ensureApps() {
       at TIMESTAMPTZ DEFAULT NOW()
     );
     ALTER TABLE rise_applications ADD COLUMN IF NOT EXISTS schools TEXT[] NOT NULL DEFAULT '{}';
-    ALTER TABLE rise_users ADD COLUMN IF NOT EXISTS schools TEXT[] NOT NULL DEFAULT '{}';
     ALTER TABLE rise_applications ADD COLUMN IF NOT EXISTS parent_hash TEXT;
     ALTER TABLE rise_users ADD COLUMN IF NOT EXISTS parent_hash TEXT, ADD COLUMN IF NOT EXISTS parent_token TEXT;
-    CREATE UNIQUE INDEX IF NOT EXISTS rise_users_parent_token ON rise_users(parent_token) WHERE parent_token IS NOT NULL;
+    ALTER TABLE rise_users ADD COLUMN IF NOT EXISTS schools TEXT[] NOT NULL DEFAULT '{}';
   `);
 
   // Matching helpers. A school, district and province written a little differently still match.
@@ -1631,7 +1595,7 @@ app.post('/api/apply/learner', async (req, res) => {
     const saId = String(req.body.saId || '').replace(/\s/g, '');
     const cell = String(req.body.parentCell || '').trim();
     const report = req.body.report;
-    const parentPassword = String(req.body.parentPassword || '');
+    const parentPass = String(req.body.parentPassword || '');
     const selfie = req.body.parentSelfie;
     const province = PROVINCES.find(p => p.toLowerCase() === String(req.body.province || '').toLowerCase());
     const district = String(req.body.district || '').replace(/\s+/g, ' ').trim().slice(0, 80);
@@ -1646,9 +1610,8 @@ app.post('/api/apply/learner', async (req, res) => {
     if (!waNumber(cell)) return res.status(400).json({ error: 'Enter a valid South African cell number for the parent, for example 082 123 4567.' });
     if (!validSaId(saId)) return res.status(400).json({ error: 'The SA ID number is not valid. It must be 13 digits.' });
     if (!okFile(report)) return res.status(400).json({ error: 'Upload the report from the previous grade.' });
-    if (parentPassword.length < 6) return res.status(400).json({ error: 'The parent password must be at least 6 characters.' });
-    if (!selfie || typeof selfie.data !== 'string' || !/^data:image\/(jpeg|png|webp);base64,/.test(selfie.data) || selfie.data.length > 1500000)
-      return res.status(400).json({ error: 'Take a clear selfie of the parent. It must be a photo (JPEG, PNG or WebP).' });
+    if (parentPass.length < 6) return res.status(400).json({ error: 'The parent password must be 6 or more characters.' });
+    if (!(okFile(selfie) && /^data:image\/(jpeg|png|webp);base64,/.test(selfie.data))) return res.status(400).json({ error: 'Take or upload the parent selfie (a JPEG, PNG or WebP photo).' });
 
     const ex = await pool.query("SELECT status FROM rise_applications WHERE type='learner' AND sa_id=$1", [saId]);
     if (ex.rowCount && ex.rows[0].status !== 'rejected')
@@ -1658,11 +1621,12 @@ app.post('/api/apply/learner', async (req, res) => {
     // Random 10-digit student number (shown to the learner on screen; accepted automatically later)
     const sn = await newStudentNumber();
     await pool.query(
-      "INSERT INTO rise_applications(id,type,name,cell,sa_id,grade,student_number,docs,province,district,school,subjects,parent_hash) VALUES($1,'learner',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",
-      [id(), name, cell.slice(0, 30), saId, grade, sn,
-       JSON.stringify({ report: { name: report.name, data: report.data }, parentselfie: { name: 'parent-selfie.jpg', data: selfie.data } }),
-       province, district, school, subjects, await bcrypt.hash(parentPassword, 12)]
+      "INSERT INTO rise_applications(id,type,name,cell,sa_id,grade,student_number,docs,province,district,school,subjects) VALUES($1,'learner',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+      [id(), name, cell.slice(0, 30), saId, grade, sn, JSON.stringify({ report: { name: report.name, data: report.data } }), province, district, school, subjects]
     );
+    // Parent password (stored scrambled/hashed) and parent selfie (kept with the documents, admins and lecturers only)
+    await pool.query('UPDATE rise_applications SET parent_hash=$2 WHERE student_number=$1', [sn, await bcrypt.hash(parentPass, 12)]);
+    await pool.query('UPDATE rise_applications SET docs = docs || $2::jsonb WHERE student_number=$1', [sn, JSON.stringify({ selfie: { name: selfie.name, data: selfie.data } })]);
     res.json({ ok: true, studentNumber: sn, autoAcceptHours: AUTO_ACCEPT_HOURS });
   } catch (e) {
     res.status(500).json({ error: e.message });
