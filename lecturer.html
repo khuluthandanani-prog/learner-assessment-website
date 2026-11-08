@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Lecturer | RISE COLLECTIVE</title>
+<title>Admin | RISE COLLECTIVE</title>
 <link rel="stylesheet" href="style.css">
 <link rel="stylesheet" href="tiles.css">
 </head>
@@ -11,7 +11,7 @@
 <header class="top">
   <div class="brand">
     <span class="logo"></span>
-    <div>RISE COLLECTIVE<small>LECTURER / ADMIN</small></div>
+    <div>RISE COLLECTIVE<small>ADMIN</small></div>
   </div>
   <div>👤 <span id="who"></span> <button class="btn sm" onclick="logout()">Logout</button></div>
 </header>
@@ -182,6 +182,23 @@ async function resetPw(id) {
   }
 }
 
+// Sets or resets the PARENT password of a learner. The parent logs in with the student number and this password.
+async function parentPw(id) {
+  const p = prompt('New PARENT password for this learner (minimum 6 characters). Only set one after you have checked who the parent is:');
+  if (!p) return;
+  if (p.length < 6) return alert('Too short.');
+
+  try {
+    await api('/admin/users/' + id + '/parent-password', {
+      method: 'PATCH',
+      body: JSON.stringify({ password: p })
+    });
+    alert('Parent password saved. A parent who was already logged in is signed out.');
+  } catch (x) {
+    alert(x.message);
+  }
+}
+
 async function editSub(id) {
   const l = (window.LL || []).find(x => x.id === id);
   const v = prompt(
@@ -299,6 +316,7 @@ async function render() {
                 : `<button class="btn sm ghost" onclick="setSt('${l.id}','blocked')">Block</button>`}
               <button class="btn sm ghost" onclick="editSub('${l.id}')">Edit subjects</button>
               <button class="btn sm ghost" onclick="resetPw('${l.id}')">Reset password</button>
+              <button class="btn sm ghost" onclick="parentPw('${l.id}')">Parent password</button>
               <button class="btn sm ghost" onclick="delU('${l.id}')">Delete</button>
             </td>
           </tr>`;
