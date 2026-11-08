@@ -94,7 +94,8 @@ color:#fff
 <button class="btn" style="width:100%">Login</button>
 
 <p class="m">
-Learners log in with their 10-digit student number. Parents use their child's student number with the parent password.
+Learners log in with their 10-digit student number.
+Parents log in with their child's student number and the parent password.
 New here? Press <b>Apply</b> first to get your student number.
 </p>
 
@@ -109,8 +110,8 @@ New here? Press <b>Apply</b> first to get your student number.
 <select name="role" id="roleSel">
 
 <option value="learner">Learner</option>
-<option value="lecturer">Lecturer</option>
-<option value="tutor">Junior Tutor</option>
+<option value="lecturer">Admin</option>
+<option value="tutor">Tutoring Teacher</option>
 
 </select>
 
@@ -236,8 +237,8 @@ r==='tutor'?'Access code (only if you did not apply)':
 'Access code';
 
 $('#regBtn').textContent=
-r==='lecturer'?'Create lecturer account':
-r==='tutor'?'Create junior tutor account':
+r==='lecturer'?'Create admin account':
+r==='tutor'?'Create tutoring teacher account':
 r==='secretadmin'?'Create admin account':
 'Create learner account';
 
@@ -245,9 +246,9 @@ $('#regNote').textContent=
 r==='secretadmin'
 ?'One-time option. New admin: fill in your details. To upgrade an existing account, use its email and its current password. It disappears once used.'
 :r==='lecturer'
-?'Lecturer registration requires the access code from the administrator.'
+?'Admin registration requires the access code from the main administrator.'
 :r==='tutor'
-?'Junior tutors: use the same email you applied with. Your application must be accepted first.'
+?'Tutoring teachers: use the same email you applied with. Your application must be accepted first.'
 :'Use the student number you received when you applied. Your application must be accepted first.';
 
 }
@@ -374,7 +375,7 @@ x.upgraded
 ?'Your account is now an admin. Log in with the same email and password.'
 :x.status==='approved'
 ?'Account created. Learners log in with their student number and password.'
-:'Registration submitted. Wait for Lecturer/Admin approval before logging in.'
+:'Registration submitted. Wait for Admin approval before logging in.'
 
 );
 
