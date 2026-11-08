@@ -27,8 +27,8 @@ function addLinksInner(){
  const mgr=u.role==='admin'||u.role==='lecturer';
  // Admins, lecturers and junior tutors: own profile (picture, description, gender, learner numbers)
  if(onLec)addTile('profileLink','profile.html','🙂','My Profile','Picture, about me and your learners');
- // Admins and lecturers: registered junior tutors
- if(onLec&&mgr)addTile('tutorsLink','tutors.html','👥','Junior Tutors','Registered junior tutors');
+ // Admins and lecturers: registered tutoring teachers
+ if(onLec&&mgr)addTile('tutorsLink','tutors.html','👥','Tutoring Teachers','Registered tutoring teachers');
  // Admins and lecturers: learner and tutor applications, red count when some are waiting
  if(onLec&&mgr){const a=addTile('appLink','applications.html','📨','Applications','Learner and tutor applications');if(a)api('/admin/applications').then(d=>{const n=d.applications.filter(x=>x.status==='pending').length;if(n>0){const c=$('.count',a);c.textContent=n;c.hidden=false}}).catch(()=>{})}
  // Admin only: video day pass requests
@@ -91,12 +91,21 @@ window.addEventListener('load',addSubjectPics);
 // The subject boxes are drawn after the page loads, so look again for a few seconds (subjects page only)
 if(/subjects\.html/.test(location.pathname)){let n=0;const t=setInterval(()=>{addSubjectPics();if(++n>=20)clearInterval(t)},500)}
 
-// Parent logins are view-only: show a banner and switch off buttons that add or change anything.
-// (The server also refuses every change made by a parent.)
-function parentView(){
- const u=session();if(!u||!u.parent)return;
- if(!$('#parentBar')&&document.body){const b=document.createElement('div');b.id='parentBar';b.style.cssText='background:#c9a227;color:#0f1b3d;text-align:center;padding:6px 10px;font-weight:600;font-size:.9rem';b.textContent='Parent view: you can look, but not change anything.';document.body.prepend(b)}
- $$('button,input[type=submit],input[type=file]').forEach(b=>{if(b.closest('header'))return;const t=(b.textContent||b.value||'').trim();if(b.type==='file'||/\b(submit|register|request|upload|send|pay|save|delete|add|post|mark)/i.test(t)){b.disabled=true;b.title='Parents have view-only access'}});
-}
-document.addEventListener('DOMContentLoaded',parentView);window.addEventListener('load',parentView);
-setInterval(parentView,1500);
+// Parent view: a parent logs in with the child's student number and their own password.
+// They see exactly what the learner sees but cannot submit or register (the server refuses it too).
+(function(){
+ const u=session();
+ if(!u||!u.parent)return;
+ const css=document.createElement('style');
+ css.textContent='form{display:none!important}#parentBar{background:#c9a227;color:#0f1b3d;padding:10px 14px;text-align:center;font-weight:700}';
+ document.head.appendChild(css);
+ const bar=()=>{
+  if($('#parentBar')||!document.body)return;
+  const d=document.createElement('div');
+  d.id='parentBar';
+  d.textContent='Parent view: you can see what your child sees. Your child submits their own work.';
+  document.body.insertBefore(d,document.body.firstChild);
+ };
+ document.addEventListener('DOMContentLoaded',bar);
+ window.addEventListener('load',bar);
+})();
