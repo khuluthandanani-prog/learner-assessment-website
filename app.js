@@ -104,3 +104,6 @@ function parentView(){
 }
 document.addEventListener('DOMContentLoaded',parentView);window.addEventListener('load',parentView);
 setInterval(parentView,1500);
+
+// Hide the little symbols (emoji) in the corner of the home-screen squares
+(function(){const s=document.createElement('style');s.textContent='.tile .ico,.ptile .ico{display:none!important}';document.head.appendChild(s)})();
