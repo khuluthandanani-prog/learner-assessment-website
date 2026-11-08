@@ -7,18 +7,18 @@
  <p class="m">When an application type is closed, people who press Apply for it see "Applications are currently closed." Only the admin can change this.</p>
  <table>
   <tr><td style="padding:6px 12px 6px 0"><b>Learner applications:</b> <span id="stL" class="tag"></span></td><td><button class="btn sm" id="btL"></button></td></tr>
-  <tr><td style="padding:6px 12px 6px 0"><b>Tutor applications:</b> <span id="stT" class="tag"></span></td><td><button class="btn sm" id="btT"></button></td></tr>
+  <tr><td style="padding:6px 12px 6px 0"><b>Tutoring teacher applications:</b> <span id="stT" class="tag"></span></td><td><button class="btn sm" id="btT"></button></td></tr>
  </table>
 </div>
 
-<p>Open the documents, check them, then accept or reject. For learners, press <b>Parent selfie</b> to look at the parent's photo before accepting. Learners are accepted automatically <b id="ah">24</b> hours after they apply, unless you accept or reject them first. Tutor applications always need you to accept them. Fix a spelling with <b>Edit location</b> (learners) or <b>Edit schools</b> (tutors). Learners only see the notes, videos and assessments of the tutor who teaches at their school, so the school names must match.</p>
-<label>Show: <select id="flt" onchange="draw()"><option value="all">All</option><option value="pending">Waiting for a decision</option><option value="learner">Learners</option><option value="tutor">Tutors</option></select></label>
+<p>Open the documents, check them, then accept or reject. For learners, open the <b>Parent selfie</b> to see who the parent is before you accept. Learners are accepted automatically <b id="ah">24</b> hours after they apply, unless you accept or reject them first. Tutoring teacher applications always need you to accept them. Fix a spelling with <b>Edit location</b> (learners) or <b>Edit schools</b> (tutoring teachers). Learners only see the notes, videos and assessments of the tutoring teacher who teaches at their school, so the school names must match.</p>
+<label>Show: <select id="flt" onchange="draw()"><option value="all">All</option><option value="pending">Waiting for a decision</option><option value="learner">Learners</option><option value="tutor">Tutoring teachers</option></select></label>
 <div id="list"></div>
 </main>
 <script src="app.js"></script><script>
 const u=guard('admin');if(u&&u.role==='tutor')location.href='lecturer.html';
 let D=[],SUBJ=[],ST={learner:true,tutor:true},MAXS=2;
-const KEY={report:'Report',matric:'Matric',transcript:'Transcript',idcopy:'ID copy',selfie:'Parent selfie'};
+const KEY={report:'Report',matric:'Matric',transcript:'Transcript',idcopy:'ID copy',parentselfie:'Parent selfie'};
 api('/apply/subjects').then(d=>{SUBJ=d.subjects;if(d.maxTutorSchools)MAXS=d.maxTutorSchools}).catch(()=>{});
 
 // Open / close box (admin only)
@@ -38,7 +38,7 @@ async function loadSwitch(){
  catch(e){$('#sw').innerHTML='<b>Could not load the open/close setting.</b><p>'+esc(e.message)+'</p>'}
 }
 async function setOpen(type,open){
- if(!open&&!confirm('Close '+type+' applications? People will see "Applications are currently closed."'))return;
+ if(!open&&!confirm('Close '+(type==='tutor'?'tutoring teacher':type)+' applications? People will see "Applications are currently closed."'))return;
  try{const d=await api('/admin/apply-status',{method:'PATCH',body:JSON.stringify({type,open})});ST={learner:d.learner===true,tutor:d.tutor===true};drawSwitch()}
  catch(e){alert(e.message)}
 }
@@ -57,7 +57,7 @@ function statusCell(a){
  return h;
 }
 
-// School / District / Province column. Tutors have one or two schools; a tutor with none cannot reach any learners yet.
+// School / District / Province column. Tutoring teachers have one or two schools; one with none cannot reach any learners yet.
 function placeCell(a){
  if(a.type==='learner')return esc(a.school||'—')+'<br>'+esc(a.district||'—')+'<br>'+esc(a.province||'—');
  const sc=a.schools||[];
@@ -75,27 +75,26 @@ function draw(){
    ((st==='pending'||(st==='accepted'&&!a.registered))?`<button class="btn sm ghost" onclick="act('${a.id}','reject')">Reject</button> `:'')+
    (a.type==='learner'?`<button class="btn sm ghost" onclick="editLoc('${a.id}')">Edit location</button> `:`<button class="btn sm ghost" onclick="editSchools('${a.id}')">Edit schools</button> `)+
    `<button class="btn sm ghost" onclick="editSub('${a.id}')">Edit subjects</button>`;
-  return `<tr><td>${a.type==='learner'?'Learner':'Tutor'}</td><td>${esc(a.name)}</td><td><b>${esc(a.studentNumber||'—')}</b></td><td>${esc(a.grade||'—')}</td><td>${esc((a.subjects||[]).join(', ')||'—')}</td><td>${placeCell(a)}</td><td>${esc(a.saId)}</td><td>${esc(a.cell)}</td><td>${esc(a.email||'—')}</td><td>${fmt(a.at)}</td><td>${docs}</td><td>${statusCell(a)}</td><td>${acts}</td></tr>`}).join('')}</table></div></div>`
+  return `<tr><td>${a.type==='learner'?'Learner':'Tutoring teacher'}</td><td>${esc(a.name)}</td><td><b>${esc(a.studentNumber||'—')}</b></td><td>${esc(a.grade||'—')}</td><td>${esc((a.subjects||[]).join(', ')||'—')}</td><td>${placeCell(a)}</td><td>${esc(a.saId)}</td><td>${esc(a.cell)}</td><td>${esc(a.email||'—')}</td><td>${fmt(a.at)}</td><td>${docs}</td><td>${statusCell(a)}</td><td>${acts}</td></tr>`}).join('')}</table></div></div>`
  :'<p class="m">No applications.</p>'
 }
 
-// Shows the parent selfie on screen (press anywhere to close)
-function showPhoto(d){
- const o=document.createElement('div');
- o.style.cssText='position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.8);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:16px';
- const img=document.createElement('img');
- img.src=d.data;img.alt='Parent selfie';
- img.style.cssText='max-width:92vw;max-height:80vh;border-radius:12px;background:#fff';
- const b=document.createElement('button');
- b.className='btn';b.textContent='Close';
- o.appendChild(img);o.appendChild(b);
- o.onclick=()=>o.remove();
- document.body.appendChild(o);
-}
+// Photos (the parent selfie) open on screen; other documents download
 async function dl(id,key){
  try{
   const d=await api('/admin/applications/'+id+'/doc/'+key);
-  if(key==='selfie'){showPhoto(d);return}
+  if(/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+\/=]+$/.test(d.data)){
+   const o=document.createElement('div');
+   o.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:99;display:flex;align-items:center;justify-content:center;padding:16px;cursor:pointer';
+   const im=new Image();
+   im.src=d.data;
+   im.alt='';
+   im.style.cssText='max-width:100%;max-height:100%;border-radius:8px';
+   o.appendChild(im);
+   o.onclick=()=>o.remove();
+   document.body.appendChild(o);
+   return;
+  }
   const a=document.createElement('a');a.href=d.data;a.download=d.name;document.body.appendChild(a);a.click();a.remove()
  }
  catch(e){alert(e.message)}
@@ -117,12 +116,12 @@ async function editLoc(id){
  await call(id,{action:'location',province,district,school});
  render();
 }
-// Tutors: province, district and 1 to MAXS schools (separate two schools with a semicolon)
+// Tutoring teachers: province, district and 1 to MAXS schools (separate two schools with a semicolon)
 async function editSchools(id){
  const a=D.find(x=>x.id===id);
- const province=prompt('Province where this tutor teaches:',a.province||'');if(province===null)return;
+ const province=prompt('Province where this tutoring teacher teaches:',a.province||'');if(province===null)return;
  const district=prompt('District:',a.district||'');if(district===null)return;
- const v=prompt('School(s) this tutor teaches at. Maximum '+MAXS+'. Separate schools with a semicolon ( ; ):',(a.schools||[]).join('; '));if(v===null)return;
+ const v=prompt('School(s) this tutoring teacher teaches at. Maximum '+MAXS+'. Separate schools with a semicolon ( ; ):',(a.schools||[]).join('; '));if(v===null)return;
  const schools=v.split(';').map(s=>s.trim()).filter(Boolean);
  const r=await call(id,{action:'tutorSchools',province,district,schools});
  if(r)alert('Saved.');
