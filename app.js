@@ -17,8 +17,12 @@ const fileLink=f=>f?`<a class="btn sm" href="${f.data}" download="${esc(f.name)}
 // Junior tutors: hide the "Learners" tab and square (the server also refuses learner management)
 function hideTutorTabs(){const u=session();if(!u||u.role!=='tutor')return;$$('button').forEach(b=>{const t=b.textContent.trim();if(t.length<25&&/learners/i.test(t))b.style.display='none'});$$('.tile[data-t="lp"]').forEach(t=>t.style.display='none')}
 
+// Pictures behind some of the home-screen squares (admin, lecturer and tutor home page). Squares without a picture keep their normal look.
+const TILE_PICS={profileLink:'profile.avif',topLink:'top_5_in_districts.jpg',compStaffLink:'competition.jpg',compRegLink:'competition.jpg',resLink:'subjects.avif'};
+(function(){const s=document.createElement('style');s.textContent='.tile.pic{position:relative;overflow:hidden;background-size:cover;background-position:center;color:#fff;min-height:150px}.tile.pic::before{content:"";position:absolute;inset:0;z-index:0;background:linear-gradient(to top,rgba(10,18,45,.88),rgba(10,18,45,.4) 60%,rgba(10,18,45,.2))}.tile.pic>*{position:relative;z-index:1}.tile.pic h3,.tile.pic p,.tile.pic .count{color:#fff}.tile.pic .ico{text-shadow:0 1px 3px rgba(0,0,0,.6)}';document.head.appendChild(s)})();
+
 // Adds one large square to the home screen (only on pages that have a .tiles grid)
-function addTile(id,href,ico,title,desc){const box=$('.tiles');if(!box||$('#'+id))return null;const a=document.createElement('a');a.id=id;a.className='tile';a.href=href;a.innerHTML='<span class="ico">'+ico+'</span><div><div class="count" hidden></div><h3>'+title+'</h3><p>'+desc+'</p></div>';box.appendChild(a);return a}
+function addTile(id,href,ico,title,desc){const box=$('.tiles');if(!box||$('#'+id))return null;const a=document.createElement('a');a.id=id;a.className='tile';a.href=href;a.innerHTML='<span class="ico">'+ico+'</span><div><div class="count" hidden></div><h3>'+title+'</h3><p>'+desc+'</p></div>';if(TILE_PICS[id]){a.classList.add('pic');a.style.backgroundImage="url('"+TILE_PICS[id]+"'),linear-gradient(135deg,#0f1b3d,#3b82f6)"}box.appendChild(a);return a}
 
 function addLinks(){try{addLinksInner()}catch(e){console.error('addLinks:',e)}}
 function addLinksInner(){
@@ -91,21 +95,12 @@ window.addEventListener('load',addSubjectPics);
 // The subject boxes are drawn after the page loads, so look again for a few seconds (subjects page only)
 if(/subjects\.html/.test(location.pathname)){let n=0;const t=setInterval(()=>{addSubjectPics();if(++n>=20)clearInterval(t)},500)}
 
-// Parent view: a parent logs in with the child's student number and their own password.
-// They see exactly what the learner sees but cannot submit or register (the server refuses it too).
-(function(){
- const u=session();
- if(!u||!u.parent)return;
- const css=document.createElement('style');
- css.textContent='form{display:none!important}#parentBar{background:#c9a227;color:#0f1b3d;padding:10px 14px;text-align:center;font-weight:700}';
- document.head.appendChild(css);
- const bar=()=>{
-  if($('#parentBar')||!document.body)return;
-  const d=document.createElement('div');
-  d.id='parentBar';
-  d.textContent='Parent view: you can see what your child sees. Your child submits their own work.';
-  document.body.insertBefore(d,document.body.firstChild);
- };
- document.addEventListener('DOMContentLoaded',bar);
- window.addEventListener('load',bar);
-})();
+// Parent logins are view-only: show a banner and switch off buttons that add or change anything.
+// (The server also refuses every change made by a parent.)
+function parentView(){
+ const u=session();if(!u||!u.parent)return;
+ if(!$('#parentBar')&&document.body){const b=document.createElement('div');b.id='parentBar';b.style.cssText='background:#c9a227;color:#0f1b3d;text-align:center;padding:6px 10px;font-weight:600;font-size:.9rem';b.textContent='Parent view: you can look, but not change anything.';document.body.prepend(b)}
+ $$('button,input[type=submit],input[type=file]').forEach(b=>{if(b.closest('header'))return;const t=(b.textContent||b.value||'').trim();if(b.type==='file'||/\b(submit|register|request|upload|send|pay|save|delete|add|post|mark)/i.test(t)){b.disabled=true;b.title='Parents have view-only access'}});
+}
+document.addEventListener('DOMContentLoaded',parentView);window.addEventListener('load',parentView);
+setInterval(parentView,1500);
