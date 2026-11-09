@@ -8,8 +8,11 @@ $$('.logo').forEach(e=>e.innerHTML=LOGO);
 const session=()=>{try{return JSON.parse(localStorage.getItem('rise_session'))}catch(e){return null}};
 const saveSession=x=>localStorage.setItem('rise_session',JSON.stringify(x));
 const logout=()=>{localStorage.removeItem('rise_session');location.href='index.html'};
-// The error message now includes the HTTP status code when the server did not send its own message
-async function api(path,opts={}){const me=session();const r=await fetch(API+path,{...opts,headers:{'Content-Type':'application/json','x-admin-id':(me&&me.id)||'',...(opts.headers||{})}});const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.error||('Server error ('+r.status+')'));return d}
+// The error message now includes the HTTP status code when the server did not send its own message.
+// When a learner opens a subject, the tutors of that subject are shown at the top right.
+async function api(path,opts={}){const me=session();const r=await fetch(API+path,{...opts,headers:{'Content-Type':'application/json','x-admin-id':(me&&me.id)||'',...(opts.headers||{})}});const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.error||('Server error ('+r.status+')'));
+ try{if(me&&me.role==='learner'&&/^\/resources\?subject=/.test(path))showSubjectTutors(decodeURIComponent(path.split('subject=')[1].split('&')[0]))}catch(e){}
+ return d}
 function guard(role){const u=session();const staff=r=>r==='admin'||r==='lecturer'||r==='tutor';const ok=u&&(staff(role)?staff(u.role):u.role===role);if(!ok){logout();return null}const w=$('#who');if(w)w.textContent=u.name;return u}
 const readFile=f=>new Promise((res,rej)=>{if(!f)return res(null);if(f.size>1.5e6)return rej('File too large (max 1.5MB).');const r=new FileReader();r.onload=()=>res({name:f.name,data:r.result});r.onerror=()=>rej('Could not read file.');r.readAsDataURL(f)});
 const fileLink=f=>f?`<a class="btn sm" href="${f.data}" download="${esc(f.name)}">⬇ ${esc(f.name)}</a>`:'';
@@ -95,15 +98,71 @@ window.addEventListener('load',addSubjectPics);
 // The subject boxes are drawn after the page loads, so look again for a few seconds (subjects page only)
 if(/subjects\.html/.test(location.pathname)){let n=0;const t=setInterval(()=>{addSubjectPics();if(++n>=20)clearInterval(t)},500)}
 
+// Tutor profile at the top right of a subject (learners and parents).
+// Shows the tutors who teach this subject at the learner's school. Press one to read the profile.
+function removeTutorBadge(){const b=document.getElementById('tutorBadge');if(b)b.remove()}
+async function showSubjectTutors(subject){
+ try{
+  const d=await api('/subject-tutors?subject='+encodeURIComponent(subject));
+  removeTutorBadge();
+  if(!d.tutors||!d.tutors.length)return;
+  const box=document.createElement('div');
+  box.id='tutorBadge';
+  box.style.cssText='position:fixed;top:68px;right:10px;z-index:60;display:flex;flex-direction:column;align-items:flex-end;gap:6px';
+  d.tutors.forEach(t=>{
+   const b=document.createElement('button');
+   b.type='button';
+   b.title='Tutor profile';
+   b.style.cssText='display:flex;align-items:center;gap:8px;max-width:210px;padding:4px 12px 4px 4px;border:1px solid #cfd6e6;border-radius:999px;background:#fff;color:#0f1b3d;box-shadow:0 2px 8px rgba(0,0,0,.25);cursor:pointer;font:600 .85rem system-ui,sans-serif';
+   b.appendChild(tutorAvatar(t,38));
+   const n=document.createElement('span');
+   n.textContent=t.name;
+   n.style.cssText='overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+   b.appendChild(n);
+   b.onclick=()=>showTutorCard(t);
+   box.appendChild(b);
+  });
+  document.body.appendChild(box);
+ }catch(e){}
+}
+function tutorAvatar(t,size){
+ if(t.photo){const i=document.createElement('img');i.src=t.photo;i.alt='';i.style.cssText='width:'+size+'px;height:'+size+'px;border-radius:50%;object-fit:cover;flex:none';return i}
+ const s=document.createElement('span');
+ s.textContent=(t.name||'?').trim().charAt(0).toUpperCase();
+ s.style.cssText='width:'+size+'px;height:'+size+'px;border-radius:50%;background:#0f1b3d;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;flex:none';
+ return s;
+}
+function showTutorCard(t){
+ const o=document.createElement('div');
+ o.style.cssText='position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:16px';
+ const c=document.createElement('div');
+ c.style.cssText='background:#fff;color:#111;border-radius:14px;max-width:380px;width:100%;padding:22px;text-align:center;box-shadow:0 8px 30px rgba(0,0,0,.4)';
+ c.onclick=e=>e.stopPropagation();
+ const av=tutorAvatar(t,110);av.style.margin='0 auto 12px';av.style.display=t.photo?'block':'flex';
+ const h=document.createElement('h3');h.textContent=t.name;h.style.margin='0';
+ const p=document.createElement('p');p.textContent='Tutor for '+(t.subject||'this subject');p.style.cssText='margin:4px 0 12px;color:#555';
+ const bio=document.createElement('p');bio.textContent=t.bio||'This tutor has not added a description yet.';bio.style.cssText='white-space:pre-wrap;text-align:left;margin:0 0 16px';
+ const x=document.createElement('button');x.type='button';x.className='btn';x.textContent='Close';x.onclick=()=>o.remove();
+ c.append(av,h,p,bio,x);o.appendChild(c);o.onclick=()=>o.remove();
+ document.body.appendChild(o);
+}
+// Leaving a subject (Back, Home, Subjects) removes the tutor profile from the screen
+document.addEventListener('click',e=>{
+ const el=e.target.closest&&e.target.closest('a,button');
+ if(!el||el.closest('#tutorBadge'))return;
+ const t=(el.textContent||'').trim();
+ if(/^←|back|home|subjects$/i.test(t))setTimeout(removeTutorBadge,50);
+});
+
 // Parent logins are view-only: show a banner and switch off buttons that add or change anything.
 // (The server also refuses every change made by a parent.)
 function parentView(){
  const u=session();if(!u||!u.parent)return;
  if(!$('#parentBar')&&document.body){const b=document.createElement('div');b.id='parentBar';b.style.cssText='background:#c9a227;color:#0f1b3d;text-align:center;padding:6px 10px;font-weight:600;font-size:.9rem';b.textContent='Parent view: you can look, but not change anything.';document.body.prepend(b)}
- $$('button,input[type=submit],input[type=file]').forEach(b=>{if(b.closest('header'))return;const t=(b.textContent||b.value||'').trim();if(b.type==='file'||/\b(submit|register|request|upload|send|pay|save|delete|add|post|mark)/i.test(t)){b.disabled=true;b.title='Parents have view-only access'}});
+ $$('button,input[type=submit],input[type=file]').forEach(b=>{if(b.closest('header')||b.closest('#tutorBadge'))return;const t=(b.textContent||b.value||'').trim();if(b.type==='file'||/\b(submit|register|request|upload|send|pay|save|delete|add|post|mark)/i.test(t)){b.disabled=true;b.title='Parents have view-only access'}});
 }
 document.addEventListener('DOMContentLoaded',parentView);window.addEventListener('load',parentView);
 setInterval(parentView,1500);
 
-// Hide the little symbols (emoji) in the corner of the home-screen squares
-(function(){const s=document.createElement('style');s.textContent='.tile .ico,.ptile .ico{display:none!important}';document.head.appendChild(s)})();
+// Home-screen squares: hide the little corner symbols, and show every square title in CAPITAL LETTERS and italics
+(function(){const s=document.createElement('style');s.textContent='.tile .ico,.ptile .ico{display:none!important}.tile h3,.ptile h3{text-transform:uppercase!important;font-style:italic!important}';document.head.appendChild(s)})();
