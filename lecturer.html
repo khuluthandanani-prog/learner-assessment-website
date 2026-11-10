@@ -61,7 +61,7 @@
 <button class="btn">Publish</button>
 </form>
 </div>
-<div id="al" class="boxes"></div>
+<div id="al"></div>
 <p class="m">Registration link: <b id="lnk"></b></p>
 </div>
 
@@ -139,7 +139,7 @@ $('#af').onsubmit = async e => {
 
     e.target.reset();
     render();
-    alert('Assessment published. Parents of learners in this subject are told on WhatsApp.');
+    alert('Assessment published.');
   } catch (x) {
     alert(x.message);
   }
@@ -430,22 +430,29 @@ async function render() {
       S.some(x => x.aid === a.id && x.uid === l.id)
     );
 
-    $('#al').innerHTML = A.map(a => {
-      const n = S.filter(s => s.aid === a.id).length;
-
-      return `<div class="card">
-        <div class="row">
-          <h3>${esc(a.title)}</h3>
-          <span class="tag">${n}/${forA(a).length} submitted</span>
-        </div>
-        <p class="m">${esc(a.subject || 'All subjects')}</p>
-        <p>${esc(a.desc)}</p>
-        <p class="m">Due ${fmt(a.due)} · ${a.total} marks</p>
-        ${fileLink(a.file)}
-        <button class="btn sm ghost" onclick="view('${a.id}')">Mark</button>
-        <button class="btn sm ghost" onclick="delA('${a.id}')">Delete</button>
-      </div>`;
-    }).join('') || '<p class="m">No assessments yet.</p>';
+    // Assessments as a table
+    $('#al').innerHTML = A.length
+      ? `<h2>Assessments</h2>
+      <div class="card"><div class="table"><table>
+        <tr><th>Subject</th><th>Title</th><th>Instructions</th><th>Due</th><th>Total marks</th><th>Submitted</th><th>File</th><th>Actions</th></tr>
+        ${A.map(a => {
+          const n = S.filter(s => s.aid === a.id).length;
+          return `<tr>
+            <td>${esc(a.subject || 'All subjects')}</td>
+            <td><b>${esc(a.title)}</b></td>
+            <td>${esc(String(a.desc || '').slice(0, 120))}</td>
+            <td>${fmt(a.due)}</td>
+            <td>${a.total}</td>
+            <td><span class="tag">${n}/${forA(a).length}</span></td>
+            <td>${fileLink(a.file) || '—'}</td>
+            <td>
+              <button class="btn sm ghost" onclick="view('${a.id}')">Mark</button>
+              <button class="btn sm ghost" onclick="delA('${a.id}')">Delete</button>
+            </td>
+          </tr>`;
+        }).join('')}
+      </table></div></div>`
+      : '<p class="m">No assessments yet.</p>';
 
     const pend = L.filter(x => x.status === 'pending').length;
     $('#cLrn').textContent = pend;
