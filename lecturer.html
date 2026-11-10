@@ -119,4 +119,22 @@ $('#af').onsubmit = async e => {
   let file;
 
   try {
-    file = await
+    file = await readFile(f.file.files[0]);
+  } catch (x) {
+    return alert(x);
+  }
+
+  try {
+    await api('/assessments', {
+      method: 'POST',
+      body: JSON.stringify({
+        subject: f.sub.value,
+        title: f.ttl.value,
+        desc: f.desc.value,
+        total: +f.total.value,
+        due: f.due.value,
+        file
+      })
+    });
+
+    e.target.reset();
