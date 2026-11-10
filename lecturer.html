@@ -138,3 +138,373 @@ $('#af').onsubmit = async e => {
     });
 
     e.target.reset();
+    render();
+    alert('Assessment published. Parents of learners in this subject are told on WhatsApp.');
+  } catch (x) {
+    alert(x.message);
+  }
+};
+
+async function setSt(id, status) {
+  try {
+    await api('/admin/users/' + id, {
+      method: 'PATCH',
+      body: JSON.stringify({ status })
+    });
+    render();
+  } catch (x) {
+    alert(x.message);
+  }
+}
+
+async function delU(id) {
+  if (!confirm('Delete this learner and submissions?')) return;
+
+  try {
+    await api('/admin/users/' + id, { method: 'DELETE' });
+    render();
+  } catch (x) {
+    alert(x.message);
+  }
+}
+
+async function resetPw(id) {
+  const p = prompt('New password (minimum 6 characters):');
+  if (!p) return;
+  if (p.length < 6) return alert('Too short.');
+
+  try {
+    await api('/admin/users/' + id + '/password', {
+      method: 'PATCH',
+      body: JSON.stringify({ password: p })
+    });
+    alert('Password changed.');
+  } catch (x) {
+    alert(x.message);
+  }
+}
+
+// Sets or resets the PARENT password of a learner. The parent logs in with the student number and this password.
+async function parentPw(id) {
+  const p = prompt('New PARENT password for this learner (minimum 6 characters). Only set one after you have checked who the parent is:');
+  if (!p) return;
+  if (p.length < 6) return alert('Too short.');
+
+  try {
+    await api('/admin/users/' + id + '/parent-password', {
+      method: 'PATCH',
+      body: JSON.stringify({ password: p })
+    });
+    alert('Parent password saved. A parent who was already logged in is signed out.');
+  } catch (x) {
+    alert(x.message);
+  }
+}
+
+async function editSub(id) {
+  const l = (window.LL || []).find(x => x.id === id);
+  const v = prompt(
+    'Subjects, separated by commas. Available: ' + SUBJ.join(', '),
+    ((l && l.subjects) || []).join(', ')
+  );
+
+  if (v === null) return;
+
+  try {
+    await api('/admin/users/' + id + '/subjects', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        subjects: v.split(',').map(s => s.trim()).filter(Boolean)
+      })
+    });
+    render();
+  } catch (x) {
+    alert(x.message);
+  }
+}
+
+async function delA(id) {
+  if (!confirm('Delete assessment and submissions?')) return;
+
+  try {
+    await api('/assessments/' + id, { method: 'DELETE' });
+    render();
+  } catch (x) {
+    alert(x.message);
+  }
+}
+
+function view(id) {
+  cur = id;
+  tab('sp');
+}
+
+async function save(id, tot) {
+  const m = $('#m' + id).value;
+
+  if (m === '' || +m < 0 || +m > tot) {
+    return alert('Mark must be 0–' + tot);
+  }
+
+  try {
+    await api('/submissions/' + id, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        mark: +m,
+        feedback: $('#f' + id).value
+      })
+    });
+
+    alert('Saved');
+    render();
+  } catch (x) {
+    alert(x.message);
+  }
+}
+
+// ---------- Auto-marking with a PDF memorandum (AI suggests, you approve) ----------
+function readPdf(f) {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onerror = () => rej(Error('Could not read the file.'));
+    r.onload = () => res({ name: f.name, data: r.result });
+    r.readAsDataURL(f);
+  });
+}
+
+function amPick() {
+  $('#memoF').click();
+}
+
+async function amUpload(e) {
+  const f = e.target.files[0];
+  e.target.value = '';
+  if (!f || !AMD.a) return;
+  if (!/\.pdf$/i.test(f.name)) return alert('The memorandum must be a PDF.');
+
+  try {
+    const file = await readPdf(f);
+    await api('/automark/' + encodeURIComponent(AMD.a.id) + '/memo', {
+      method: 'PUT',
+      body: JSON.stringify({ file })
+    });
+    render();
+  } catch (x) {
+    alert(x.message);
+  }
+}
+
+async function amRun(redo) {
+  if (!AMD.a) return;
+  if (redo && !confirm('Mark every unapproved submission again?')) return;
+
+  try {
+    const r = await api('/automark/' + encodeURIComponent(AMD.a.id) + '/run', {
+      method: 'POST',
+      body: JSON.stringify({ redo: !!redo })
+    });
+    if (!r.started) alert('Nothing new to mark.');
+    render();
+  } catch (x) {
+    alert(x.message);
+  }
+}
+
+async function amApproveAll() {
+  const items = [];
+
+  AMD.S.forEach(s => {
+    const x = AMD.AM[s.id];
+    if (s.mark == null && x && x.aiStatus === 'done' && !x.stale) {
+      const m = $('#m' + s.id), f = $('#f' + s.id);
+      if (m && m.value !== '') items.push({ id: s.id, mark: m.value, feedback: f ? f.value : '' });
+    }
+  });
+
+  if (!items.length) return alert('No suggested marks are waiting for approval.');
+  if (!confirm('Approve ' + items.length + ' suggested mark(s)? Learners will see them.')) return;
+
+  try {
+    const r = await api('/automark/' + encodeURIComponent(AMD.a.id) + '/confirm', {
+      method: 'POST',
+      body: JSON.stringify({ items })
+    });
+    alert(r.approved + ' mark(s) approved.');
+    render();
+  } catch (x) {
+    alert(x.message);
+  }
+}
+
+function amBox() {
+  const a = AMD.a, i = AMD.info;
+  if (!a) return '';
+  const list = AMD.S.map(s => AMD.AM[s.id]).filter(Boolean);
+  const pend = list.filter(x => x.aiStatus === 'pending').length;
+  const ready = AMD.S.filter(s => {
+    const x = AMD.AM[s.id];
+    return s.mark == null && x && x.aiStatus === 'done' && !x.stale;
+  }).length;
+
+  return `<div class="card">
+    <h3>Auto-mark with memorandum (AI)</h3>
+    <p class="m">Upload the memorandum as a PDF. The AI reads it and each learner's PDF answers and suggests a mark.
+    Nothing reaches learners until you press Save on a learner or Approve all.</p>
+    ${i.configured ? '' : '<p><span class="tag bad">AI marking is not set up. Add ANTHROPIC_API_KEY in Render.</span></p>'}
+    <p class="m">${i.hasMemo ? 'Memorandum: <b>' + esc(i.memoName || 'uploaded') + '</b>' : 'No memorandum uploaded yet.'}</p>
+    <input type="file" id="memoF" accept="application/pdf,.pdf" hidden onchange="amUpload(event)">
+    <button class="btn sm" onclick="amPick()">${i.hasMemo ? 'Replace memorandum (PDF)' : 'Upload memorandum (PDF)'}</button>
+    ${i.hasMemo ? `<button class="btn sm" onclick="amRun(false)">Mark all submissions</button>
+    <button class="btn sm ghost" onclick="amRun(true)">Mark all again</button>
+    <button class="btn sm" onclick="amApproveAll()">Approve all suggested marks</button>` : ''}
+    <p class="m">${pend ? pend + ' being marked…  ' : ''}${ready ? ready + ' suggested mark(s) waiting for your approval.' : ''}</p>
+  </div>`;
+}
+
+// Builds the learner cards for the selected assessment (uses AI suggestions in AMD when present)
+function cards() {
+  const { a, S, forA } = window.CARDS || {};
+  $('#sub').innerHTML = !a
+    ? '<p class="m">Create an assessment first.</p>'
+    : `<div class="boxes">${forA(a).map(l => {
+        const s = S.find(x => x.aid === a.id && x.uid === l.id);
+        const ai = s ? AMD.AM[s.id] : null;
+        const sug = !!(s && s.mark == null && ai && ai.aiStatus === 'done' && !ai.stale);
+        const val = s ? (s.mark != null ? s.mark : (sug ? ai.aiMark : '')) : '';
+        const fb = s ? (s.mark != null ? s.feedback : (sug ? ai.aiFeedback : (s.feedback || ''))) : '';
+        const aiTag = !s || s.mark != null || !ai ? ''
+          : ai.aiStatus === 'pending' ? ' <span class="tag warn">AI marking…</span>'
+          : ai.aiStatus === 'failed' ? ' <span class="tag bad">AI failed</span>'
+          : sug ? ' <span class="tag" style="background:#e0e7ff">AI suggestion: check, then Save</span>' : '';
+
+        return `<div class="card">
+          <h3>${esc(l.studentNumber || '—')}</h3>
+          <p class="m">${esc(l.email)}</p>
+          <p>${s
+            ? (s.mark != null
+              ? '<span class="tag ok">Marked</span>'
+              : '<span class="tag">Submitted</span> <small>' + fmt(s.at) + '</small>' + aiTag)
+            : '<span class="tag bad">Not submitted</span>'}</p>
+          ${s
+            ? `<p>${esc(s.text).slice(0,120)} ${fileLink(s.file)}</p>
+              <label>Mark /${a.total}</label>
+              <input type="number" min="0" max="${a.total}" value="${esc(String(val))}" id="m${s.id}">
+              <label>Feedback</label>
+              <textarea id="f${s.id}">${esc(fb || '')}</textarea>
+              <button class="btn sm" onclick="save('${s.id}',${a.total})">Save</button>`
+            : ''}
+        </div>`;
+      }).join('')}</div>`;
+}
+
+// Loads AI suggestions in the background. If this fails, manual marking still works.
+async function amLoad() {
+  const a = AMD.a;
+  if (!a) return;
+  try {
+    const r = await api('/automark/' + encodeURIComponent(a.id));
+    if (!AMD.a || AMD.a.id !== a.id) return;
+    AMD.info = { hasMemo: r.assessment.hasMemo, memoName: r.assessment.memoName, configured: r.configured };
+    r.items.forEach(i => { AMD.AM[i.id] = i; });
+    $('#am').innerHTML = amBox();
+    cards();
+    clearTimeout(window.amT);
+    if (!$('#sp').hidden && Object.values(AMD.AM).some(x => x.aiStatus === 'pending')) {
+      window.amT = setTimeout(render, 5000);
+    }
+  } catch (e) {
+    $('#am').innerHTML = '';
+  }
+}
+
+async function render() {
+  try {
+    const d = await api('/admin/data');
+    const A = d.assessments, S = d.submissions, L = d.learners;
+
+    window.LL = L;
+
+    const forA = a => L.filter(l =>
+      !a.subject ||
+      (l.subjects || []).includes(a.subject) ||
+      S.some(x => x.aid === a.id && x.uid === l.id)
+    );
+
+    $('#al').innerHTML = A.map(a => {
+      const n = S.filter(s => s.aid === a.id).length;
+
+      return `<div class="card">
+        <div class="row">
+          <h3>${esc(a.title)}</h3>
+          <span class="tag">${n}/${forA(a).length} submitted</span>
+        </div>
+        <p class="m">${esc(a.subject || 'All subjects')}</p>
+        <p>${esc(a.desc)}</p>
+        <p class="m">Due ${fmt(a.due)} · ${a.total} marks</p>
+        ${fileLink(a.file)}
+        <button class="btn sm ghost" onclick="view('${a.id}')">Mark</button>
+        <button class="btn sm ghost" onclick="delA('${a.id}')">Delete</button>
+      </div>`;
+    }).join('') || '<p class="m">No assessments yet.</p>';
+
+    const pend = L.filter(x => x.status === 'pending').length;
+    $('#cLrn').textContent = pend;
+    $('#cAs').textContent = A.length;
+    $('#cMk').textContent = S.filter(s => s.mark == null).length;
+
+    // Registered learners as a table
+    $('#ll').innerHTML = L.length
+      ? `<h2>Registered learners</h2>
+      <p class="m">Pending learners cannot log in until you approve them.</p>
+      <div class="card"><div class="table"><table>
+        <tr><th>Student no.</th><th>Email</th><th>Subjects</th><th>School / District / Province</th><th>Status</th><th>Last login</th><th>Actions</th></tr>
+        ${L.map(l => {
+          const st = l.status || 'approved';
+          return `<tr>
+            <td><b>${esc(l.studentNumber || '—')}</b></td>
+            <td>${esc(l.email)}</td>
+            <td>${esc((l.subjects || []).join(', ') || 'none yet')}</td>
+            <td>${esc([l.school, l.district, l.province].filter(Boolean).join(' · ') || '—')}</td>
+            <td><span class="tag ${st === 'approved' ? 'ok' : st === 'pending' ? 'warn' : 'bad'}">${esc(st)}</span></td>
+            <td>${fmt(l.lastLogin)}</td>
+            <td>
+              ${st !== 'approved'
+                ? `<button class="btn sm" onclick="setSt('${l.id}','approved')">${st === 'pending' ? 'Approve' : 'Unblock'}</button>`
+                : `<button class="btn sm ghost" onclick="setSt('${l.id}','blocked')">Block</button>`}
+              <button class="btn sm ghost" onclick="editSub('${l.id}')">Edit subjects</button>
+              <button class="btn sm ghost" onclick="resetPw('${l.id}')">Reset password</button>
+              <button class="btn sm ghost" onclick="parentPw('${l.id}')">Parent password</button>
+              <button class="btn sm ghost" onclick="delU('${l.id}')">Delete</button>
+            </td>
+          </tr>`;
+        }).join('')}
+      </table></div></div>`
+      : '<p class="m">No learners registered yet.</p>';
+
+    const sel = $('#sel');
+
+    sel.innerHTML = A.map(a =>
+      `<option value="${a.id}">${esc((a.subject ? a.subject + ' – ' : '') + a.title)}</option>`
+    ).join('');
+
+    if (cur && A.some(a => a.id === cur)) sel.value = cur;
+
+    cur = sel.value;
+
+    const a = A.find(x => x.id === cur);
+
+    // Cards first, so Marking always opens; AI suggestions are added afterwards if available
+    AMD = { a: a || null, S: a ? S.filter(x => x.aid === a.id) : [], AM: {}, info: { hasMemo: false, memoName: '', configured: true } };
+    window.CARDS = { a, S, forA };
+    $('#am').innerHTML = '';
+    cards();
+    amLoad();
+  } catch (x) {
+    alert(x.message);
+  }
+}
+
+render();
+</script>
+</body>
+</html>
