@@ -61,7 +61,7 @@
 <button class="btn">Publish</button>
 </form>
 </div>
-<div id="al"></div>
+<div id="al" class="boxes"></div>
 <p class="m">Registration link: <b id="lnk"></b></p>
 </div>
 
@@ -139,7 +139,7 @@ $('#af').onsubmit = async e => {
 
     e.target.reset();
     render();
-    alert('Assessment published.');
+    alert('Assessment published. Parents of learners in this subject are told on WhatsApp.');
   } catch (x) {
     alert(x.message);
   }
@@ -361,40 +361,47 @@ function amBox() {
   </div>`;
 }
 
-// Builds the learner cards for the selected assessment (uses AI suggestions in AMD when present)
+// Builds the marking TABLE for the selected assessment (uses AI suggestions in AMD when present)
 function cards() {
   const { a, S, forA } = window.CARDS || {};
-  $('#sub').innerHTML = !a
-    ? '<p class="m">Create an assessment first.</p>'
-    : `<div class="boxes">${forA(a).map(l => {
-        const s = S.find(x => x.aid === a.id && x.uid === l.id);
-        const ai = s ? AMD.AM[s.id] : null;
-        const sug = !!(s && s.mark == null && ai && ai.aiStatus === 'done' && !ai.stale);
-        const val = s ? (s.mark != null ? s.mark : (sug ? ai.aiMark : '')) : '';
-        const fb = s ? (s.mark != null ? s.feedback : (sug ? ai.aiFeedback : (s.feedback || ''))) : '';
-        const aiTag = !s || s.mark != null || !ai ? ''
-          : ai.aiStatus === 'pending' ? ' <span class="tag warn">AI marking…</span>'
-          : ai.aiStatus === 'failed' ? ' <span class="tag bad">AI failed</span>'
-          : sug ? ' <span class="tag" style="background:#e0e7ff">AI suggestion: check, then Save</span>' : '';
+  if (!a) {
+    $('#sub').innerHTML = '<p class="m">Create an assessment first.</p>';
+    return;
+  }
 
-        return `<div class="card">
-          <h3>${esc(l.studentNumber || '—')}</h3>
-          <p class="m">${esc(l.email)}</p>
-          <p>${s
-            ? (s.mark != null
-              ? '<span class="tag ok">Marked</span>'
-              : '<span class="tag">Submitted</span> <small>' + fmt(s.at) + '</small>' + aiTag)
-            : '<span class="tag bad">Not submitted</span>'}</p>
-          ${s
-            ? `<p>${esc(s.text).slice(0,120)} ${fileLink(s.file)}</p>
-              <label>Mark /${a.total}</label>
-              <input type="number" min="0" max="${a.total}" value="${esc(String(val))}" id="m${s.id}">
-              <label>Feedback</label>
-              <textarea id="f${s.id}">${esc(fb || '')}</textarea>
-              <button class="btn sm" onclick="save('${s.id}',${a.total})">Save</button>`
-            : ''}
-        </div>`;
-      }).join('')}</div>`;
+  const rows = forA(a).map(l => {
+    const s = S.find(x => x.aid === a.id && x.uid === l.id);
+    const ai = s ? AMD.AM[s.id] : null;
+    const sug = !!(s && s.mark == null && ai && ai.aiStatus === 'done' && !ai.stale);
+    const val = s ? (s.mark != null ? s.mark : (sug ? ai.aiMark : '')) : '';
+    const fb = s ? (s.mark != null ? s.feedback : (sug ? ai.aiFeedback : (s.feedback || ''))) : '';
+    const aiTag = !s || s.mark != null || !ai ? ''
+      : ai.aiStatus === 'pending' ? ' <span class="tag warn">AI marking…</span>'
+      : ai.aiStatus === 'failed' ? ' <span class="tag bad">AI failed</span>'
+      : sug ? ' <span class="tag" style="background:#e0e7ff">AI suggestion: check, then Save</span>' : '';
+    const status = s
+      ? (s.mark != null
+          ? '<span class="tag ok">Marked</span>'
+          : '<span class="tag">Submitted</span> <small>' + fmt(s.at) + '</small>' + aiTag)
+      : '<span class="tag bad">Not submitted</span>';
+
+    return `<tr>
+      <td><b>${esc(l.studentNumber || '—')}</b></td>
+      <td>${esc(l.email)}</td>
+      <td>${status}</td>
+      <td>${s ? esc(s.text).slice(0, 120) + ' ' + fileLink(s.file) : '—'}</td>
+      <td>${s ? `<input type="number" min="0" max="${a.total}" value="${esc(String(val))}" id="m${s.id}" style="width:70px">` : '—'}</td>
+      <td>${s ? `<textarea id="f${s.id}" style="min-width:180px;width:100%">${esc(fb || '')}</textarea>` : '—'}</td>
+      <td>${s ? `<button class="btn sm" onclick="save('${s.id}',${a.total})">Save</button>` : ''}</td>
+    </tr>`;
+  }).join('');
+
+  $('#sub').innerHTML = rows
+    ? `<div class="card"><div class="table"><table>
+        <tr><th>Student no.</th><th>Email</th><th>Status</th><th>Work</th><th>Mark /${a.total}</th><th>Feedback</th><th></th></tr>
+        ${rows}
+      </table></div></div>`
+    : '<p class="m">No learners for this assessment yet.</p>';
 }
 
 // Loads AI suggestions in the background. If this fails, manual marking still works.
@@ -430,29 +437,22 @@ async function render() {
       S.some(x => x.aid === a.id && x.uid === l.id)
     );
 
-    // Assessments as a table
-    $('#al').innerHTML = A.length
-      ? `<h2>Assessments</h2>
-      <div class="card"><div class="table"><table>
-        <tr><th>Subject</th><th>Title</th><th>Instructions</th><th>Due</th><th>Total marks</th><th>Submitted</th><th>File</th><th>Actions</th></tr>
-        ${A.map(a => {
-          const n = S.filter(s => s.aid === a.id).length;
-          return `<tr>
-            <td>${esc(a.subject || 'All subjects')}</td>
-            <td><b>${esc(a.title)}</b></td>
-            <td>${esc(String(a.desc || '').slice(0, 120))}</td>
-            <td>${fmt(a.due)}</td>
-            <td>${a.total}</td>
-            <td><span class="tag">${n}/${forA(a).length}</span></td>
-            <td>${fileLink(a.file) || '—'}</td>
-            <td>
-              <button class="btn sm ghost" onclick="view('${a.id}')">Mark</button>
-              <button class="btn sm ghost" onclick="delA('${a.id}')">Delete</button>
-            </td>
-          </tr>`;
-        }).join('')}
-      </table></div></div>`
-      : '<p class="m">No assessments yet.</p>';
+    $('#al').innerHTML = A.map(a => {
+      const n = S.filter(s => s.aid === a.id).length;
+
+      return `<div class="card">
+        <div class="row">
+          <h3>${esc(a.title)}</h3>
+          <span class="tag">${n}/${forA(a).length} submitted</span>
+        </div>
+        <p class="m">${esc(a.subject || 'All subjects')}</p>
+        <p>${esc(a.desc)}</p>
+        <p class="m">Due ${fmt(a.due)} · ${a.total} marks</p>
+        ${fileLink(a.file)}
+        <button class="btn sm ghost" onclick="view('${a.id}')">Mark</button>
+        <button class="btn sm ghost" onclick="delA('${a.id}')">Delete</button>
+      </div>`;
+    }).join('') || '<p class="m">No assessments yet.</p>';
 
     const pend = L.filter(x => x.status === 'pending').length;
     $('#cLrn').textContent = pend;
