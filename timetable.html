@@ -1,0 +1,87 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Weekly Timetable | RISE COLLECTIVE</title><link rel="stylesheet" href="style.css"><link rel="stylesheet" href="tiles.css"></head><body>
+<header class="top"><div class="brand"><span class="logo"></span><div>RISE COLLECTIVE<small>WEEKLY TIMETABLE</small></div></div><div>👤 <span id="who"></span> <button class="btn sm" onclick="logout()">Logout</button></div></header><main>
+<a class="back" id="bk" href="learner.html">← Home</a><h2>Weekly timetable</h2>
+<p id="wk" class="card" hidden style="padding:10px 14px"></p>
+<p class="m" id="upd"></p>
+
+<div id="ed" class="card" hidden style="margin-bottom:16px">
+ <h3 style="margin-top:0" id="edT">Add a time slot</h3>
+ <label>Week message (shown above the timetable)</label>
+ <textarea id="wnote" rows="2" maxlength="500" style="width:100%"></textarea>
+ <button class="btn sm" id="wsave" type="button">Save message</button>
+ <hr>
+ <label>Day</label>
+ <select id="fd"><option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option><option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option><option value="7">Sunday</option></select>
+ <label>Start time</label><input id="fs" type="time">
+ <label>End time</label><input id="fe" type="time">
+ <label>What is happening (for example Maths tutorial, Physics assessment)</label><input id="ft" maxlength="120">
+ <label>Subject (optional)</label><input id="fj" maxlength="80">
+ <label>Note (optional)</label><input id="fn" maxlength="300">
+ <p><button class="btn" id="fsave" type="button">Add time slot</button> <button class="btn ghost" id="fcancel" type="button" hidden>Cancel change</button></p>
+ <p><button class="btn sm ghost" id="fclear" type="button">Clear the whole week</button></p>
+</div>
+
+<div id="list"></div>
+</main>
+<script src="app.js"></script><script>
+const u=session();if(!u)location.href='index.html';else $('#who').textContent=u.name;
+if(u&&['admin','lecturer','tutor'].includes(u.role))$('#bk').href='lecturer.html';
+const DAYS=['','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+let D=null,EDIT=null;
+
+async function load(){
+ try{
+  D=await api('/timetable');
+  $('#wk').hidden=!D.weekNote;$('#wk').textContent=D.weekNote||'';
+  $('#upd').textContent=D.updatedAt?'Last changed '+fmt(D.updatedAt)+'. The timetable repeats until it is changed.':'';
+  $('#ed').hidden=!D.canEdit;
+  if(D.canEdit&&document.activeElement!==$('#wnote'))$('#wnote').value=D.weekNote||'';
+  draw();
+ }catch(e){$('#list').innerHTML='<div class="card"><b>Unable to load.</b><p>'+esc(e.message)+'</p></div>'}
+}
+
+function draw(){
+ const by={};D.entries.forEach(x=>{(by[x.day]=by[x.day]||[]).push(x)});
+ let any=false;
+ const h=[1,2,3,4,5,6,7].map(d=>{
+  const L=by[d];
+  if(!L&&!D.canEdit)return'';
+  if(L)any=true;
+  const rows=L?L.map(x=>`<tr><td style="white-space:nowrap"><b>${esc(x.start)} – ${esc(x.end)}</b></td><td>${esc(x.title)}${x.subject?'<br><small>'+esc(x.subject)+'</small>':''}${x.note?'<br><small>'+esc(x.note)+'</small>':''}</td>${D.canEdit?`<td style="white-space:nowrap"><button class="btn sm ghost" onclick="edit('${x.id}')">Change</button> <button class="btn sm ghost" onclick="del('${x.id}')">Delete</button></td>`:''}</tr>`).join(''):`<tr><td colspan="3"><small>Nothing scheduled.</small></td></tr>`;
+  return `<div class="card" style="margin-bottom:12px"><h3 style="margin-top:0">${DAYS[d]}</h3><div class="table"><table>${rows}</table></div></div>`;
+ }).join('');
+ $('#list').innerHTML=any||D.canEdit?h:'<p class="m">The timetable has not been set yet.</p>';
+}
+
+function resetForm(){
+ EDIT=null;$('#edT').textContent='Add a time slot';$('#fsave').textContent='Add time slot';$('#fcancel').hidden=true;
+ $('#fs').value='';$('#fe').value='';$('#ft').value='';$('#fj').value='';$('#fn').value='';
+}
+function edit(id){
+ const x=D.entries.find(e=>e.id===id);if(!x)return;
+ EDIT=id;$('#edT').textContent='Change this time slot';$('#fsave').textContent='Save change';$('#fcancel').hidden=false;
+ $('#fd').value=x.day;$('#fs').value=x.start;$('#fe').value=x.end;$('#ft').value=x.title;$('#fj').value=x.subject||'';$('#fn').value=x.note||'';
+ $('#ed').scrollIntoView({behavior:'smooth'});
+}
+async function del(id){
+ if(!confirm('Delete this time slot?'))return;
+ try{await api('/timetable/'+id,{method:'DELETE'});if(EDIT===id)resetForm();load()}catch(e){alert(e.message)}
+}
+$('#fcancel').onclick=resetForm;
+$('#fsave').onclick=async()=>{
+ const body=JSON.stringify({day:$('#fd').value,start:$('#fs').value,end:$('#fe').value,title:$('#ft').value,subject:$('#fj').value,note:$('#fn').value});
+ try{
+  if(EDIT)await api('/timetable/'+EDIT,{method:'PATCH',body});
+  else await api('/timetable',{method:'POST',body});
+  resetForm();load();
+ }catch(e){alert(e.message)}
+};
+$('#wsave').onclick=async()=>{
+ try{await api('/timetable/note',{method:'PATCH',body:JSON.stringify({note:$('#wnote').value})});load()}catch(e){alert(e.message)}
+};
+$('#fclear').onclick=async()=>{
+ if(!confirm('Delete every time slot for the whole week? This cannot be undone.'))return;
+ try{await api('/timetable',{method:'DELETE'});resetForm();load()}catch(e){alert(e.message)}
+};
+load();
+</script></body></html>
