@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -95,7 +96,7 @@ color:#fff
 
 <p class="m">
 Learners log in with their 10-digit student number.
-Parents log in with their child's student number and the parent password.
+Parents log in with their child's student number and their own password.
 New here? Press <b>Apply</b> first to get your student number.
 </p>
 
@@ -110,18 +111,23 @@ New here? Press <b>Apply</b> first to get your student number.
 <select name="role" id="roleSel">
 
 <option value="learner">Learner</option>
-<option value="lecturer">Admin</option>
-<option value="tutor">Tutoring Teacher</option>
+<option value="parent">Parent / Guardian</option>
+<option value="lecturer">Lecturer</option>
+<option value="tutor">Junior Tutor</option>
 
 </select>
 
-<label>Full name</label>
+<label id="nmLbl">Full name</label>
 
 <input name="name" required>
+
+<div id="emBox">
 
 <label>Email</label>
 
 <input name="email" type="email" required>
+
+</div>
 
 <label>Password</label>
 
@@ -129,7 +135,7 @@ New here? Press <b>Apply</b> first to get your student number.
 
 <div id="snBox">
 
-<label>Student number (10 digits)</label>
+<label id="snLbl">Student number (10 digits)</label>
 
 <input
 name="sn"
@@ -139,6 +145,14 @@ pattern="[0-9]{10}"
 autocomplete="off"
 required
 >
+
+</div>
+
+<div id="pcBox" hidden>
+
+<label>Your cell number (the one on the application)</label>
+
+<input name="pcell" type="tel" placeholder="082 123 4567" autocomplete="off">
 
 </div>
 
@@ -219,7 +233,9 @@ function roleUI(){
 
 const r=$('#roleSel').value;
 
-const L=r==='learner';
+const P=r==='parent';
+
+const L=r==='learner'||P;
 
 const el=$('#rf').elements;
 
@@ -227,9 +243,21 @@ $('#snBox').hidden=!L;
 
 el.sn.required=L;
 
+$('#emBox').hidden=P;
+
+el.email.required=!P;
+
+$('#pcBox').hidden=!P;
+
+el.pcell.required=P;
+
 $('#codeBox').hidden=L;
 
 el.code.required=(r==='lecturer'||r==='secretadmin');
+
+$('#nmLbl').textContent=P?'Your full name (parent / guardian)':'Full name';
+
+$('#snLbl').textContent=P?"Your child's student number (10 digits)":'Student number (10 digits)';
 
 $('#codeLbl').textContent=
 r==='secretadmin'?'Secret admin code':
@@ -237,18 +265,21 @@ r==='tutor'?'Access code (only if you did not apply)':
 'Access code';
 
 $('#regBtn').textContent=
-r==='lecturer'?'Create admin account':
-r==='tutor'?'Create tutoring teacher account':
+r==='lecturer'?'Create lecturer account':
+r==='tutor'?'Create junior tutor account':
 r==='secretadmin'?'Create admin account':
+P?'Create parent account':
 'Create learner account';
 
 $('#regNote').textContent=
 r==='secretadmin'
 ?'One-time option. New admin: fill in your details. To upgrade an existing account, use its email and its current password. It disappears once used.'
 :r==='lecturer'
-?'Admin registration requires the access code from the main administrator.'
+?'Lecturer registration requires the access code from the administrator.'
 :r==='tutor'
-?'Tutoring teachers: use the same email you applied with. Your application must be accepted first.'
+?'Junior tutors: use the same email you applied with. Your application must be accepted first.'
+:P
+?"Parents: your child must have registered first, and the office must have approved your selfie from the application. You will log in with your child's student number and the password you choose here. It must be different from your child's password."
 :'Use the student number you received when you applied. Your application must be accepted first.';
 
 }
@@ -355,7 +386,7 @@ body:JSON.stringify({
 
 name:f.name.value,
 
-email:f.email.value,
+email:f.role.value==='parent'?'':f.email.value,
 
 password:f.pass.value,
 
@@ -363,7 +394,9 @@ role:f.role.value,
 
 code:f.code.value,
 
-studentNumber:f.sn.value
+studentNumber:f.sn.value,
+
+parentCell:f.pcell.value
 
 })
 
@@ -373,9 +406,11 @@ alert(
 
 x.upgraded
 ?'Your account is now an admin. Log in with the same email and password.'
+:x.role==='parent'
+?"Parent account created. Log in with your child's student number and YOUR password."
 :x.status==='approved'
 ?'Account created. Learners log in with their student number and password.'
-:'Registration submitted. Wait for Admin approval before logging in.'
+:'Registration submitted. Wait for Lecturer/Admin approval before logging in.'
 
 );
 
