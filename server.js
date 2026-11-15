@@ -71,9 +71,6 @@ const SHARE_MAX_DEVICES = parseInt(process.env.SHARE_MAX_DEVICES, 10) > 0 ? pars
 // (change with AUTO_ACCEPT_HOURS in Render > Environment)
 const AUTO_ACCEPT_HOURS = Number(process.env.AUTO_ACCEPT_HOURS) > 0 ? Number(process.env.AUTO_ACCEPT_HOURS) : 24;
 
-// A junior tutor can teach at this many schools (change with MAX_TUTOR_SCHOOLS)
-const MAX_TUTOR_SCHOOLS = parseInt(process.env.MAX_TUTOR_SCHOOLS, 10) > 0 ? parseInt(process.env.MAX_TUTOR_SCHOOLS, 10) : 2;
-
 // ---- One-time secret admin registration ----
 // Set ADMIN_SETUP_CODE in Render. The first person to register with it becomes an admin,
 // after which the option disappears from the form and the server refuses it for good.
@@ -318,20 +315,27 @@ async function anyUser(req, res, next) {
 
 const isStaffRole = r => ['admin', 'lecturer', 'tutor'].includes(r);
 
-// ---- Junior tutors only reach the learners of the schools they teach at ----
-// SQL fragment: true when the row (by its created_by) is NOT a tutor's, or when the tutor teaches at the learner's school.
-// tbl = table alias, p = placeholder holding the learner's school (e.g. '$2')
+// ---- Junior tutors only reach the learners of the schools they teach at, in the subjects they teach there ----
+// SQL fragment: true when the row (by its created_by) is NOT a tutor's, or when the tutor teaches the row's SUBJECT
+// at the learner's school (rise_users.teaching = [{school, subjects[]}]).
+// tbl = table alias (it must have a "subject" column), p = placeholder holding the learner's school (e.g. '$2')
 const visSql = (tbl, p) =>
   `(NOT EXISTS (SELECT 1 FROM rise_users t WHERE t.id=${tbl}.created_by AND t.role='tutor')
-    OR EXISTS (SELECT 1 FROM rise_users t WHERE t.id=${tbl}.created_by AND t.role='tutor'
-               AND EXISTS (SELECT 1 FROM unnest(t.schools) sc WHERE lower(trim(sc))=lower(trim(COALESCE(${p}::text,''))))))`;
+    OR EXISTS (SELECT 1 FROM rise_users t, jsonb_array_elements(t.teaching) e
+               WHERE t.id=${tbl}.created_by AND t.role='tutor'
+                 AND lower(trim(e->>'school'))=lower(trim(COALESCE(${p}::text,'')))
+                 AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(e->'subjects') sj
+                             WHERE lower(trim(sj))=lower(trim(COALESCE(${tbl}.subject,''))))))`;
 // The same check for a single item
-async function creatorVisible(createdBy, school) {
+async function creatorVisible(createdBy, school, subject) {
   if (!createdBy) return true;
-  const t = await pool.query('SELECT role,schools FROM rise_users WHERE id=$1', [createdBy]);
+  const t = await pool.query('SELECT role,teaching FROM rise_users WHERE id=$1', [createdBy]);
   if (!t.rowCount || t.rows[0].role !== 'tutor') return true;
   const s = String(school || '').trim().toLowerCase();
-  return !!s && (t.rows[0].schools || []).some(x => String(x).trim().toLowerCase() === s);
+  const sub = String(subject || '').trim().toLowerCase();
+  return !!s && !!sub && (t.rows[0].teaching || []).some(e =>
+    String(e.school || '').trim().toLowerCase() === s &&
+    (e.subjects || []).some(x => String(x).trim().toLowerCase() === sub));
 }
 
 // A learner id, or a parent id turned into the learner's id
@@ -412,7 +416,7 @@ app.post('/api/auth/register', async (req, res) => {
     let upgradeId = null;
     let appId = null;
     let studentNo = null;
-    let extra = { province: null, district: null, school: null, parentCell: null, subjects: [], schools: [] };
+    let extra = { province: null, district: null, school: null, parentCell: null, subjects: [], schools: [], teaching: [] };
 
     if (role === 'lecturer') {
       if (!process.env.LECTURER_CODE || code !== process.env.LECTURER_CODE)
@@ -421,7 +425,7 @@ app.post('/api/auth/register', async (req, res) => {
       status = 'approved';
     } else if (role === 'tutor') {
       const ap = await pool.query(
-        "SELECT id,subjects,province,district,schools FROM rise_applications WHERE type='tutor' AND status='accepted' AND user_id IS NULL AND LOWER(email)=$1 ORDER BY created_at DESC LIMIT 1",
+        "SELECT id,subjects,province,district,schools,teaching FROM rise_applications WHERE type='tutor' AND status='accepted' AND user_id IS NULL AND LOWER(email)=$1 ORDER BY created_at DESC LIMIT 1",
         [email]);
       if (ap.rowCount) {
         appId = ap.rows[0].id;
@@ -430,6 +434,7 @@ app.post('/api/auth/register', async (req, res) => {
         extra.province = ap.rows[0].province || null;
         extra.district = ap.rows[0].district || null;
         extra.schools = ap.rows[0].schools || [];
+        extra.teaching = ap.rows[0].teaching || [];
       } else if (process.env.TUTOR_CODE && code === process.env.TUTOR_CODE) {
         status = 'pending';
       } else {
@@ -470,7 +475,7 @@ app.post('/api/auth/register', async (req, res) => {
       appId = a.id;
       studentNo = sn;
       status = 'approved';
-      extra = { province: a.province, district: a.district, school: a.school, parentCell: a.cell, subjects: a.subjects || [], schools: [] };
+      extra = { province: a.province, district: a.district, school: a.school, parentCell: a.cell, subjects: a.subjects || [], schools: [], teaching: [] };
     }
 
     const uid = upgradeId || id();
@@ -490,9 +495,9 @@ app.post('/api/auth/register', async (req, res) => {
         await pool.query("UPDATE rise_users SET role='admin',status='approved' WHERE id=$1", [upgradeId]);
       } else {
         await pool.query(
-          'INSERT INTO rise_users(id,name,email,password_hash,role,status,student_number,province,district,school,parent_cell,subjects,schools) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)',
+          'INSERT INTO rise_users(id,name,email,password_hash,role,status,student_number,province,district,school,parent_cell,subjects,schools,teaching) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb)',
           [uid, name.trim(), email, await bcrypt.hash(password, 12), newRole, status, studentNo,
-           extra.province, extra.district, extra.school, extra.parentCell, extra.subjects, extra.schools]
+           extra.province, extra.district, extra.school, extra.parentCell, extra.subjects, extra.schools, JSON.stringify(extra.teaching || [])]
         );
       }
     } catch (err) {
@@ -616,7 +621,7 @@ app.get('/api/admin/data', staff, async (req, res) => {
 });
 
 // A learner (or the parent, who sees the same view) gets only the assessments of their subjects,
-// and from junior tutors only those who teach at the learner's school.
+// and from junior tutors only those who teach that subject at the learner's school.
 app.get('/api/learner/data', async (req, res) => {
   try {
     const who = await resolveLearner(req.query.userId);
@@ -699,7 +704,7 @@ app.post('/api/submissions', async (req, res) => {
       return res.status(404).json({ error: 'Assessment not found.' });
     if (a.rows[0].subject && !cleanSubjects(u.rows[0].subjects).includes(a.rows[0].subject))
       return res.status(403).json({ error: 'This assessment is not in your subjects.' });
-    if (!(await creatorVisible(a.rows[0].created_by, u.rows[0].school)))
+    if (!(await creatorVisible(a.rows[0].created_by, u.rows[0].school, a.rows[0].subject)))
       return res.status(403).json({ error: 'This assessment is not for your school.' });
     if (new Date() > new Date(a.rows[0].due))
       return res.status(403).json({ error: 'Submission closed. The deadline for this assessment has passed.' });
@@ -788,7 +793,7 @@ app.delete('/api/admin/users/:id', admin, async (req, res) => {
 app.get('/api/admin/tutors', admin, async (req, res) => {
   try {
     const r = await pool.query(`
-      SELECT u.id,u.name,u.email,u.status,u.subjects,u.schools,u.province,u.district,u.last_login AS "lastLogin",
+      SELECT u.id,u.name,u.email,u.status,u.subjects,u.schools,u.teaching,u.province,u.district,u.last_login AS "lastLogin",
         (SELECT COUNT(*) FROM rise_assessments a WHERE a.created_by=u.id)::int AS assessments,
         (SELECT COUNT(*) FROM rise_submissions s JOIN rise_assessments a ON a.id=s.assessment_id
           WHERE a.created_by=u.id AND s.mark IS NOT NULL)::int AS marked
@@ -822,7 +827,7 @@ app.delete('/api/admin/tutors/:id', admin, async (req, res) => {
 
 // ---- Notes and online videos, one set per subject ----
 // List for ONE subject (no file contents, and NO video links: links are only given out by /video below).
-// Learners only see items from admins/lecturers or from tutors who teach at their school.
+// Learners only see items from admins/lecturers or from tutors who teach this subject at their school.
 app.get('/api/resources', anyUser, async (req, res) => {
   try {
     const sub = String(req.query.subject || '');
@@ -847,7 +852,7 @@ app.get('/api/resources/:id/file', anyUser, async (req, res) => {
     const r = await pool.query('SELECT subject,file_name,file_data,created_by FROM rise_resources WHERE id=$1', [req.params.id]);
     if (!r.rowCount || !r.rows[0].file_data) return res.status(404).json({ error: 'File not found.' });
     if (!canSee(req.user, r.rows[0].subject)) return res.status(403).json({ error: 'You are not registered for this subject.' });
-    if (!isStaffRole(req.user.role) && !(await creatorVisible(r.rows[0].created_by, req.user.school)))
+    if (!isStaffRole(req.user.role) && !(await creatorVisible(r.rows[0].created_by, req.user.school, r.rows[0].subject)))
       return res.status(403).json({ error: 'These notes are not for your school.' });
     res.json({ name: r.rows[0].file_name, data: r.rows[0].file_data });
   } catch (e) {
@@ -864,7 +869,7 @@ app.get('/api/resources/:id/video', anyUser, async (req, res) => {
     if (!canSee(req.user, r.rows[0].subject)) return res.status(403).json({ error: 'You are not registered for this subject.' });
 
     if (!isStaffRole(req.user.role)) {
-      if (!(await creatorVisible(r.rows[0].created_by, req.user.school)))
+      if (!(await creatorVisible(r.rows[0].created_by, req.user.school, r.rows[0].subject)))
         return res.status(403).json({ error: 'This video is not for your school.' });
       const p = await pool.query(
         "SELECT 1 FROM rise_passes WHERE user_id=$1 AND status='active' AND expires_at>NOW()",
@@ -1505,6 +1510,12 @@ async function ensureApps() {
     CREATE UNIQUE INDEX IF NOT EXISTS rise_users_sn ON rise_users(student_number) WHERE student_number IS NOT NULL;
     CREATE UNIQUE INDEX IF NOT EXISTS rise_users_parent_of ON rise_users(learner_id) WHERE role='parent';
     ALTER TABLE rise_assessments ADD COLUMN IF NOT EXISTS subject TEXT;
+    ALTER TABLE rise_applications ADD COLUMN IF NOT EXISTS teaching JSONB NOT NULL DEFAULT '[]';
+    ALTER TABLE rise_users ADD COLUMN IF NOT EXISTS teaching JSONB NOT NULL DEFAULT '[]';
+    UPDATE rise_applications a SET teaching=(SELECT COALESCE(jsonb_agg(jsonb_build_object('school',sc,'subjects',to_jsonb(a.subjects))),'[]'::jsonb) FROM unnest(a.schools) sc)
+      WHERE a.type='tutor' AND a.teaching='[]'::jsonb AND cardinality(a.schools)>0;
+    UPDATE rise_users u SET teaching=(SELECT COALESCE(jsonb_agg(jsonb_build_object('school',sc,'subjects',to_jsonb(u.subjects))),'[]'::jsonb) FROM unnest(u.schools) sc)
+      WHERE u.role='tutor' AND u.teaching='[]'::jsonb AND cardinality(u.schools)>0;
     ALTER TABLE rise_users ADD COLUMN IF NOT EXISTS photo TEXT, ADD COLUMN IF NOT EXISTS bio TEXT, ADD COLUMN IF NOT EXISTS gender TEXT;
     CREATE TABLE IF NOT EXISTS rise_notify_log(
       id TEXT PRIMARY KEY,
@@ -1549,6 +1560,28 @@ function cleanSchools(v) {
   return out;
 }
 
+// Tutor teaching: [{school, subjects[]}], schools merged case-insensitively, subjects checked against the subject list
+function cleanTeaching(v) {
+  const out = [];
+  const idx = new Map();
+  for (const x of Array.isArray(v) ? v : []) {
+    const school = String((x && x.school) || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+    if (school.length < 2) continue;
+    const subs = cleanSubjects(x && x.subjects);
+    const k = school.toLowerCase();
+    if (idx.has(k)) {
+      const e = out[idx.get(k)];
+      e.subjects = [...new Set([...e.subjects, ...subs])];
+    } else {
+      idx.set(k, out.length);
+      out.push({ school, subjects: subs });
+    }
+  }
+  return out;
+}
+const teachingSchools = t => t.map(x => x.school);
+const teachingSubjects = t => [...new Set(t.flatMap(x => x.subjects))];
+
 // A selfie: JPEG, PNG or WebP picture, up to about 1 MB. Accepts a data URL or { name, data }.
 function selfieData(v) {
   const s = typeof v === 'string' ? v : (v && v.data);
@@ -1565,7 +1598,7 @@ function applyLimited(ip) {
 }
 
 // ---- Public: apply (no login) ----
-app.get('/api/apply/subjects', (req, res) => res.json({ subjects: SUBJECTS, provinces: PROVINCES, maxTutorSchools: MAX_TUTOR_SCHOOLS }));
+app.get('/api/apply/subjects', (req, res) => res.json({ subjects: SUBJECTS, provinces: PROVINCES }));
 
 // Public: are applications open? The apply pages call this before showing the form.
 app.get('/api/apply/status', async (req, res) => {
@@ -1625,7 +1658,7 @@ app.post('/api/apply/learner', async (req, res) => {
   }
 });
 
-// Tutor application. Province, district and the school(s) (up to MAX_TUTOR_SCHOOLS) decide which learners the tutor reaches.
+// Tutor application. Province, district and the schools WITH the subjects taught at each decide what learners see.
 app.post('/api/apply/tutor', async (req, res) => {
   try {
     if (!(await applyStatus()).tutor)
@@ -1635,15 +1668,17 @@ app.post('/api/apply/tutor', async (req, res) => {
     const email = String(req.body.email || '').trim().toLowerCase().slice(0, 200);
     const saId = String(req.body.saId || '').replace(/\s/g, '');
     const cell = String(req.body.cell || '').trim();
-    const subjects = cleanSubjects(req.body.subjects);
     const province = PROVINCES.find(p => p.toLowerCase() === String(req.body.province || '').toLowerCase()) || null;
     const district = String(req.body.district || '').replace(/\s+/g, ' ').trim().slice(0, 80) || null;
-    const schools = cleanSchools(req.body.schools);
+    const teaching = cleanTeaching(req.body.teaching);
+    const schools = teachingSchools(teaching);
+    const subjects = teachingSubjects(teaching);
     const { matric, transcript, idCopy } = req.body;
     if (name.length < 2) return res.status(400).json({ error: 'Enter your full name.' });
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'Enter a valid email address.' });
-    if (!subjects.length) return res.status(400).json({ error: 'Choose the subject you are applying for.' });
-    if (schools.length > MAX_TUTOR_SCHOOLS) return res.status(400).json({ error: 'You can choose at most ' + MAX_TUTOR_SCHOOLS + ' schools.' });
+    if (!teaching.length) return res.status(400).json({ error: 'Enter at least one school.' });
+    const bare = teaching.find(x => !x.subjects.length);
+    if (bare) return res.status(400).json({ error: 'Choose at least one subject for ' + bare.school + '.' });
     if (!waNumber(cell)) return res.status(400).json({ error: 'Enter a valid South African cell number, for example 082 123 4567.' });
     if (!validSaId(saId)) return res.status(400).json({ error: 'The SA ID number is not valid. It must be 13 digits.' });
     if (!okFile(matric) || !okFile(transcript) || !okFile(idCopy))
@@ -1658,12 +1693,12 @@ app.post('/api/apply/tutor', async (req, res) => {
     for (const x of ex.rows) await pool.query('DELETE FROM rise_applications WHERE id=$1', [x.id]);
 
     await pool.query(
-      "INSERT INTO rise_applications(id,type,name,email,cell,sa_id,docs,subjects,province,district,schools) VALUES($1,'tutor',$2,$3,$4,$5,$6,$7,$8,$9,$10)",
+      "INSERT INTO rise_applications(id,type,name,email,cell,sa_id,docs,subjects,province,district,schools,teaching) VALUES($1,'tutor',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb)",
       [id(), name, email, cell.slice(0, 30), saId, JSON.stringify({
         matric: { name: matric.name, data: matric.data },
         transcript: { name: transcript.name, data: transcript.data },
         idcopy: { name: idCopy.name, data: idCopy.data }
-      }), subjects, province, district, schools]
+      }), subjects, province, district, schools, JSON.stringify(teaching)]
     );
     res.json({ ok: true });
   } catch (e) {
@@ -1700,7 +1735,7 @@ app.get('/api/admin/applications', admin, async (req, res) => {
     await autoAcceptLearners();
     const r = await pool.query(
       `SELECT id,type,name,email,cell,sa_id AS "saId",grade,student_number AS "studentNumber",status,
-              province,district,school,schools,subjects,decided_by AS "decidedBy",
+              province,district,school,schools,teaching,subjects,decided_by AS "decidedBy",
               parent_name AS "parentName",parent_status AS "parentStatus",
               created_at AS "at",
               CASE WHEN type='learner' AND status='pending'
@@ -1769,15 +1804,20 @@ app.patch('/api/admin/applications/:id', secretAdminOnly, async (req, res) => {
       return res.json({ ok: true });
     }
     if (action === 'tutorSchools') {
-      // Tutors: province, district and 1 to MAX_TUTOR_SCHOOLS schools. The names must match the learners' school names.
+      // Tutors: province, district and any number of schools, each with its own subjects.
+      // The school names must match the learners' school names.
       if (a.type !== 'tutor') return res.status(400).json({ error: 'Only tutor applications have schools.' });
       const province = PROVINCES.find(p => p.toLowerCase() === String(req.body.province || '').toLowerCase()) || a.province;
       const district = String(req.body.district || a.district || '').replace(/\s+/g, ' ').trim().slice(0, 80);
-      const schools = cleanSchools(req.body.schools);
-      if (!schools.length) return res.status(400).json({ error: 'Enter at least one school.' });
-      if (schools.length > MAX_TUTOR_SCHOOLS) return res.status(400).json({ error: 'At most ' + MAX_TUTOR_SCHOOLS + ' schools.' });
-      await pool.query('UPDATE rise_applications SET province=$2,district=$3,schools=$4 WHERE id=$1', [a.id, province, district, schools]);
-      if (a.user_id) await pool.query('UPDATE rise_users SET province=$2,district=$3,schools=$4 WHERE id=$1', [a.user_id, province, district, schools]);
+      const teaching = cleanTeaching(req.body.teaching);
+      if (!teaching.length) return res.status(400).json({ error: 'Enter at least one school.' });
+      const bare = teaching.find(x => !x.subjects.length);
+      if (bare) return res.status(400).json({ error: 'Choose at least one valid subject for ' + bare.school + '.' });
+      const schools = teachingSchools(teaching);
+      const subjects = teachingSubjects(teaching);
+      const tj = JSON.stringify(teaching);
+      await pool.query('UPDATE rise_applications SET province=$2,district=$3,schools=$4,teaching=$5::jsonb,subjects=$6 WHERE id=$1', [a.id, province, district, schools, tj, subjects]);
+      if (a.user_id) await pool.query('UPDATE rise_users SET province=$2,district=$3,schools=$4,teaching=$5::jsonb,subjects=$6 WHERE id=$1', [a.user_id, province, district, schools, tj, subjects]);
       return res.json({ ok: true });
     }
     if (action === 'subjects') {
