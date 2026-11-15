@@ -71,6 +71,9 @@ const SHARE_MAX_DEVICES = parseInt(process.env.SHARE_MAX_DEVICES, 10) > 0 ? pars
 // (change with AUTO_ACCEPT_HOURS in Render > Environment)
 const AUTO_ACCEPT_HOURS = Number(process.env.AUTO_ACCEPT_HOURS) > 0 ? Number(process.env.AUTO_ACCEPT_HOURS) : 24;
 
+// A junior tutor can teach at this many schools (change with MAX_TUTOR_SCHOOLS)
+const MAX_TUTOR_SCHOOLS = parseInt(process.env.MAX_TUTOR_SCHOOLS, 10) > 0 ? parseInt(process.env.MAX_TUTOR_SCHOOLS, 10) : 2;
+
 // ---- One-time secret admin registration ----
 // Set ADMIN_SETUP_CODE in Render. The first person to register with it becomes an admin,
 // after which the option disappears from the form and the server refuses it for good.
@@ -129,7 +132,7 @@ async function init() {
   // Remove the variable afterwards, otherwise data is wiped on every restart.
   if (process.env.RESET_DATABASE === 'true') {
     console.log('RESET_DATABASE=true -> wiping all data');
-    await pool.query('DROP TABLE IF EXISTS rise_notify_log, rise_applications, rise_comp_subs, rise_comp_papers, rise_comp_regs, rise_settings, rise_video_log, rise_passes, rise_resources, rise_submissions, rise_assessments, rise_users CASCADE');
+    await pool.query('DROP TABLE IF EXISTS rise_signoffs, rise_work_views, rise_signoff_notices, rise_notify_log, rise_applications, rise_comp_subs, rise_comp_papers, rise_comp_regs, rise_settings, rise_video_log, rise_passes, rise_resources, rise_submissions, rise_assessments, rise_users CASCADE');
     await pool.query('DROP SEQUENCE IF EXISTS rise_student_seq');
   }
 
@@ -250,6 +253,29 @@ async function adminOnly(req, res, next) {
   }
 }
 
+// The SECRET ADMIN is the one account created (or upgraded) with ADMIN_SETUP_CODE; its id is kept in rise_settings.
+// Only the secret admin may accept, reject or change applications. Until a secret admin exists, any admin may,
+// so the site can never be locked out.
+async function canDecideApps(u) {
+  if (!u || u.role !== 'admin') return false;
+  const s = await pool.query("SELECT value FROM rise_settings WHERE key='secret_admin_used'");
+  return !s.rowCount || s.rows[0].value === u.id;
+}
+async function secretAdminOnly(req, res, next) {
+  try {
+    const x = await pool.query(
+      "SELECT id,role FROM rise_users WHERE id=$1 AND role='admin' AND status='approved'",
+      [req.headers['x-admin-id']]
+    );
+    if (!x.rowCount) return res.status(403).json({ error: 'Admin access denied' });
+    if (!(await canDecideApps(x.rows[0]))) return res.status(403).json({ error: 'Only the secret admin can approve or change applications.' });
+    req.user = x.rows[0];
+    next();
+  } catch (e) {
+    next(e);
+  }
+}
+
 // Approved admins, lecturers AND approved junior tutors (assessments, marking, posting notes)
 async function staff(req, res, next) {
   try {
@@ -265,15 +291,25 @@ async function staff(req, res, next) {
   }
 }
 
-// Any approved user: learners, tutors, lecturers, admins
+// Any approved user: learners, parents, tutors, lecturers, admins.
+// A PARENT logs in with their own account id. Here the parent is turned into the learner's view
+// (id = the learner's id, role 'learner') with isParent:true and parentId = the parent's own id.
 async function anyUser(req, res, next) {
   try {
     const x = await pool.query(
-      "SELECT id,role,subjects FROM rise_users WHERE id=$1 AND status='approved'",
+      "SELECT id,role,subjects,school,learner_id FROM rise_users WHERE id=$1 AND status='approved'",
       [req.headers['x-admin-id']]
     );
     if (!x.rowCount) return res.status(403).json({ error: 'Please log in again.' });
-    req.user = x.rows[0];
+    const u = x.rows[0];
+    if (u.role === 'parent') {
+      const l = await pool.query(
+        "SELECT id,subjects,school FROM rise_users WHERE id=$1 AND role='learner' AND status='approved'", [u.learner_id]);
+      if (!l.rowCount) return res.status(403).json({ error: 'Please log in again.' });
+      req.user = { id: l.rows[0].id, role: 'learner', subjects: l.rows[0].subjects, school: l.rows[0].school, isParent: true, parentId: u.id };
+    } else {
+      req.user = u;
+    }
     next();
   } catch (e) {
     next(e);
@@ -281,6 +317,31 @@ async function anyUser(req, res, next) {
 }
 
 const isStaffRole = r => ['admin', 'lecturer', 'tutor'].includes(r);
+
+// ---- Junior tutors only reach the learners of the schools they teach at ----
+// SQL fragment: true when the row (by its created_by) is NOT a tutor's, or when the tutor teaches at the learner's school.
+// tbl = table alias, p = placeholder holding the learner's school (e.g. '$2')
+const visSql = (tbl, p) =>
+  `(NOT EXISTS (SELECT 1 FROM rise_users t WHERE t.id=${tbl}.created_by AND t.role='tutor')
+    OR EXISTS (SELECT 1 FROM rise_users t WHERE t.id=${tbl}.created_by AND t.role='tutor'
+               AND EXISTS (SELECT 1 FROM unnest(t.schools) sc WHERE lower(trim(sc))=lower(trim(COALESCE(${p}::text,''))))))`;
+// The same check for a single item
+async function creatorVisible(createdBy, school) {
+  if (!createdBy) return true;
+  const t = await pool.query('SELECT role,schools FROM rise_users WHERE id=$1', [createdBy]);
+  if (!t.rowCount || t.rows[0].role !== 'tutor') return true;
+  const s = String(school || '').trim().toLowerCase();
+  return !!s && (t.rows[0].schools || []).some(x => String(x).trim().toLowerCase() === s);
+}
+
+// A learner id, or a parent id turned into the learner's id
+async function resolveLearner(uid) {
+  const r = await pool.query('SELECT id,role,status,learner_id FROM rise_users WHERE id=$1', [String(uid || '')]);
+  if (!r.rowCount) return null;
+  const u = r.rows[0];
+  if (u.role === 'parent') return u.status === 'approved' ? { id: u.learner_id, isParent: true } : null;
+  return u.role === 'learner' ? { id: u.id, isParent: false } : null;
+}
 
 app.get('/api/health', async (req, res) => {
   try {
@@ -291,8 +352,40 @@ app.get('/api/health', async (req, res) => {
   }
 });
 
+// Parent registration: the learner must have registered, the office must have verified the parent selfie,
+// the cell number must be the one on the application, and the password must differ from the learner's.
+async function registerParent(req, res) {
+  if (tooManyTries(req.ip)) return res.status(429).json({ error: 'Too many attempts. Try again later.' });
+  const fail = (code, msg) => { noteFail(req.ip); return res.status(code).json({ error: msg }); };
+  const name = String(req.body.name || '').trim().slice(0, 120);
+  const password = String(req.body.password || '');
+  const sn = String(req.body.studentNumber || '').replace(/\D/g, '');
+  const cell = waNumber(req.body.parentCell);
+  if (name.length < 2 || password.length < 6 || sn.length !== 10 || !cell)
+    return res.status(400).json({ error: 'Enter your name, your child\'s 10-digit student number, your cell number and a password of 6+ characters.' });
+
+  const l = await pool.query("SELECT id,password_hash,status FROM rise_users WHERE role='learner' AND student_number=$1", [sn]);
+  if (!l.rowCount) return fail(403, 'Your child must register first, using the student number.');
+  const ap = await pool.query(
+    "SELECT cell,parent_status FROM rise_applications WHERE type='learner' AND student_number=$1 AND user_id=$2", [sn, l.rows[0].id]);
+  if (!ap.rowCount || waNumber(ap.rows[0].cell) !== cell)
+    return fail(403, 'The cell number does not match the application.');
+  if (ap.rows[0].parent_status !== 'verified')
+    return res.status(403).json({ error: 'The office has not verified your selfie yet. Try again later.' });
+  const ex = await pool.query("SELECT 1 FROM rise_users WHERE role='parent' AND learner_id=$1", [l.rows[0].id]);
+  if (ex.rowCount) return res.status(409).json({ error: 'A parent account already exists for this learner.' });
+  if (await bcrypt.compare(password, l.rows[0].password_hash))
+    return res.status(400).json({ error: 'Your password must be different from your child\'s password.' });
+
+  await pool.query(
+    "INSERT INTO rise_users(id,name,email,password_hash,role,status,learner_id) VALUES($1,$2,$3,$4,'parent','approved',$5)",
+    [id(), name, 'parent-' + sn + '@parent.invalid', await bcrypt.hash(password, 12), l.rows[0].id]);
+  res.json({ ok: true, role: 'parent', status: 'approved' });
+}
+
 // Register.
 // Learners: need the student number from an ACCEPTED application, then the account is approved at once.
+// Parents: role:'parent' (see registerParent above).
 // Lecturers: role:'lecturer' + code matching LECTURER_CODE, approved immediately.
 // Junior tutors: the email of an ACCEPTED tutor application (approved at once),
 //   or the old role:'tutor' + TUTOR_CODE route (pending until an admin/lecturer approves).
@@ -301,6 +394,8 @@ app.get('/api/health', async (req, res) => {
 //   Existing email + that account's current password -> upgrades that account to admin.
 app.post('/api/auth/register', async (req, res) => {
   try {
+    if (req.body && req.body.role === 'parent') return await registerParent(req, res);
+
     let { name, email, password, role, code } = req.body;
     if (!name || !email || !password || password.length < 6)
       return res.status(400).json({ error: 'Name, email and password (6+ characters) are required.' });
@@ -317,7 +412,7 @@ app.post('/api/auth/register', async (req, res) => {
     let upgradeId = null;
     let appId = null;
     let studentNo = null;
-    let extra = { province: null, district: null, school: null, parentCell: null, subjects: [] };
+    let extra = { province: null, district: null, school: null, parentCell: null, subjects: [], schools: [] };
 
     if (role === 'lecturer') {
       if (!process.env.LECTURER_CODE || code !== process.env.LECTURER_CODE)
@@ -326,12 +421,15 @@ app.post('/api/auth/register', async (req, res) => {
       status = 'approved';
     } else if (role === 'tutor') {
       const ap = await pool.query(
-        "SELECT id,subjects FROM rise_applications WHERE type='tutor' AND status='accepted' AND user_id IS NULL AND LOWER(email)=$1 ORDER BY created_at DESC LIMIT 1",
+        "SELECT id,subjects,province,district,schools FROM rise_applications WHERE type='tutor' AND status='accepted' AND user_id IS NULL AND LOWER(email)=$1 ORDER BY created_at DESC LIMIT 1",
         [email]);
       if (ap.rowCount) {
         appId = ap.rows[0].id;
         status = 'approved';
         extra.subjects = ap.rows[0].subjects || [];
+        extra.province = ap.rows[0].province || null;
+        extra.district = ap.rows[0].district || null;
+        extra.schools = ap.rows[0].schools || [];
       } else if (process.env.TUTOR_CODE && code === process.env.TUTOR_CODE) {
         status = 'pending';
       } else {
@@ -372,7 +470,7 @@ app.post('/api/auth/register', async (req, res) => {
       appId = a.id;
       studentNo = sn;
       status = 'approved';
-      extra = { province: a.province, district: a.district, school: a.school, parentCell: a.cell, subjects: a.subjects || [] };
+      extra = { province: a.province, district: a.district, school: a.school, parentCell: a.cell, subjects: a.subjects || [], schools: [] };
     }
 
     const uid = upgradeId || id();
@@ -392,9 +490,9 @@ app.post('/api/auth/register', async (req, res) => {
         await pool.query("UPDATE rise_users SET role='admin',status='approved' WHERE id=$1", [upgradeId]);
       } else {
         await pool.query(
-          'INSERT INTO rise_users(id,name,email,password_hash,role,status,student_number,province,district,school,parent_cell,subjects) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)',
+          'INSERT INTO rise_users(id,name,email,password_hash,role,status,student_number,province,district,school,parent_cell,subjects,schools) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)',
           [uid, name.trim(), email, await bcrypt.hash(password, 12), newRole, status, studentNo,
-           extra.province, extra.district, extra.school, extra.parentCell, extra.subjects]
+           extra.province, extra.district, extra.school, extra.parentCell, extra.subjects, extra.schools]
         );
       }
     } catch (err) {
@@ -418,10 +516,12 @@ app.get('/api/auth/options', async (req, res) => {
 });
 
 // Login. Learners use their 10-digit student number; staff use their email.
+// A PARENT uses the child's student number with the PARENT's own password.
 // On failure the response has { error } and NO user.
 app.post('/api/auth/login', async (req, res) => {
   try {
     const ident = String(req.body.email || req.body.identifier || '').trim();
+    const pw = req.body.password || '';
     const isSn = /^\d{10}$/.test(ident);
     const r = isSn
       ? await pool.query('SELECT * FROM rise_users WHERE student_number=$1', [ident])
@@ -429,16 +529,29 @@ app.post('/api/auth/login', async (req, res) => {
     if (!r.rowCount) return res.status(401).json({ error: 'Wrong student number, email or password.' });
 
     const u = r.rows[0];
-    if (!(await bcrypt.compare(req.body.password || '', u.password_hash)))
-      return res.status(401).json({ error: 'Wrong student number, email or password.' });
+    let who = u;           // the account that is logging in
+    let isParent = false;
+    if (!(await bcrypt.compare(pw, u.password_hash))) {
+      // Not the learner's password: try the parent's password for this student number
+      const p = isSn && u.role === 'learner'
+        ? await pool.query("SELECT * FROM rise_users WHERE role='parent' AND learner_id=$1", [u.id])
+        : { rowCount: 0 };
+      if (!p.rowCount || !(await bcrypt.compare(pw, p.rows[0].password_hash)))
+        return res.status(401).json({ error: 'Wrong student number, email or password.' });
+      who = p.rows[0];
+      isParent = true;
+    }
     if (!isSn && u.role === 'learner' && u.student_number)
       return res.status(403).json({ error: 'Learners log in with their student number, not their email.' });
-    if (u.status === 'pending')
+    // Status of the learner applies to the parent as well (an excluded learner locks the parent out too)
+    if (u.status === 'pending' || who.status === 'pending')
       return res.status(403).json({ error: 'Your registration is awaiting Lecturer/Admin approval.' });
-    if (u.status === 'blocked')
+    if (u.status === 'blocked' || who.status === 'blocked')
       return res.status(403).json({ error: 'Your account has been blocked.' });
 
-    await pool.query('UPDATE rise_users SET last_login=NOW() WHERE id=$1', [u.id]);
+    await pool.query('UPDATE rise_users SET last_login=NOW() WHERE id=$1', [who.id]);
+    if (isParent)
+      return res.json({ user: { id: who.id, name: who.name, email: '', role: 'learner', isParent: true, studentNumber: u.student_number } });
     res.json({ user: { id: u.id, name: u.name, email: u.email, role: u.role } });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -451,7 +564,12 @@ const withFile = x => ({ ...x, file: x.file_name ? { name: x.file_name, data: x.
 app.get('/api/subjects', anyUser, async (req, res) => {
   try {
     const mine = isAllAccess(req.user) ? SUBJECTS : cleanSubjects(req.user.subjects);
-    const c = await pool.query('SELECT subject,type,COUNT(*)::int AS n FROM rise_resources GROUP BY subject,type');
+    const learner = !isStaffRole(req.user.role);
+    const c = learner
+      ? await pool.query(
+          `SELECT subject,type,COUNT(*)::int AS n FROM rise_resources r WHERE ${visSql('r', '$1')} GROUP BY subject,type`,
+          [req.user.school || ''])
+      : await pool.query('SELECT subject,type,COUNT(*)::int AS n FROM rise_resources GROUP BY subject,type');
     const cnt = {};
     c.rows.forEach(r => { (cnt[r.subject] = cnt[r.subject] || {})[r.type] = r.n; });
     res.json({
@@ -497,19 +615,27 @@ app.get('/api/admin/data', staff, async (req, res) => {
   }
 });
 
+// A learner (or the parent, who sees the same view) gets only the assessments of their subjects,
+// and from junior tutors only those who teach at the learner's school.
 app.get('/api/learner/data', async (req, res) => {
   try {
-    const uid = req.query.userId;
-    const u = await pool.query("SELECT status,subjects FROM rise_users WHERE id=$1 AND role='learner'", [uid]);
+    const who = await resolveLearner(req.query.userId);
+    if (!who) return res.status(403).json({ error: 'Account not approved' });
+    const uid = who.id;
+    const u = await pool.query("SELECT status,subjects,school FROM rise_users WHERE id=$1 AND role='learner'", [uid]);
     if (!u.rowCount || u.rows[0].status !== 'approved')
       return res.status(403).json({ error: 'Account not approved' });
 
     const [a, s] = await Promise.all([
-      pool.query('SELECT id,title,description AS desc,subject,total,due,file_name,file_data FROM rise_assessments WHERE subject IS NULL OR subject = ANY($1) ORDER BY created_at DESC', [u.rows[0].subjects || []]),
+      pool.query(
+        `SELECT id,title,description AS desc,subject,total,due,file_name,file_data FROM rise_assessments a
+         WHERE (subject IS NULL OR subject = ANY($1)) AND ${visSql('a', '$2')}
+         ORDER BY created_at DESC`, [u.rows[0].subjects || [], u.rows[0].school || '']),
       pool.query('SELECT id,assessment_id AS aid,text,file_name,file_data,submitted_at AS at,mark,feedback FROM rise_submissions WHERE user_id=$1', [uid])
     ]);
     const now = new Date();
     res.json({
+      isParent: who.isParent,
       assessments: a.rows.map(x => ({ ...withFile(x), closed: now > new Date(x.due) })),
       submissions: s.rows.map(withFile)
     });
@@ -558,19 +684,23 @@ app.delete('/api/assessments/:id', staff, async (req, res) => {
   }
 });
 
-// Submissions are refused automatically once the deadline has passed
+// Submissions are refused automatically once the deadline has passed. Parents cannot submit.
 app.post('/api/submissions', async (req, res) => {
   try {
     const { uid, aid, text, file } = req.body;
-    const u = await pool.query("SELECT status,subjects FROM rise_users WHERE id=$1 AND role='learner'", [uid]);
+    const pr = await pool.query("SELECT 1 FROM rise_users WHERE id=$1 AND role='parent'", [String(uid || '')]);
+    if (pr.rowCount) return res.status(403).json({ error: 'Parents can look at the work only. The learner submits it.' });
+    const u = await pool.query("SELECT status,subjects,school FROM rise_users WHERE id=$1 AND role='learner'", [uid]);
     if (!u.rowCount || u.rows[0].status !== 'approved')
       return res.status(403).json({ error: 'Account not approved' });
 
-    const a = await pool.query('SELECT due,subject FROM rise_assessments WHERE id=$1', [aid]);
+    const a = await pool.query('SELECT due,subject,created_by FROM rise_assessments WHERE id=$1', [aid]);
     if (!a.rowCount)
       return res.status(404).json({ error: 'Assessment not found.' });
     if (a.rows[0].subject && !cleanSubjects(u.rows[0].subjects).includes(a.rows[0].subject))
       return res.status(403).json({ error: 'This assessment is not in your subjects.' });
+    if (!(await creatorVisible(a.rows[0].created_by, u.rows[0].school)))
+      return res.status(403).json({ error: 'This assessment is not for your school.' });
     if (new Date() > new Date(a.rows[0].due))
       return res.status(403).json({ error: 'Submission closed. The deadline for this assessment has passed.' });
 
@@ -646,6 +776,7 @@ app.patch('/api/admin/users/:id/subjects', admin, async (req, res) => {
 
 app.delete('/api/admin/users/:id', admin, async (req, res) => {
   try {
+    await pool.query("DELETE FROM rise_users WHERE role='parent' AND learner_id=$1", [req.params.id]);
     await pool.query("DELETE FROM rise_users WHERE id=$1 AND role='learner'", [req.params.id]);
     res.json({ ok: true });
   } catch (e) {
@@ -657,7 +788,7 @@ app.delete('/api/admin/users/:id', admin, async (req, res) => {
 app.get('/api/admin/tutors', admin, async (req, res) => {
   try {
     const r = await pool.query(`
-      SELECT u.id,u.name,u.email,u.status,u.subjects,u.last_login AS "lastLogin",
+      SELECT u.id,u.name,u.email,u.status,u.subjects,u.schools,u.province,u.district,u.last_login AS "lastLogin",
         (SELECT COUNT(*) FROM rise_assessments a WHERE a.created_by=u.id)::int AS assessments,
         (SELECT COUNT(*) FROM rise_submissions s JOIN rise_assessments a ON a.id=s.assessment_id
           WHERE a.created_by=u.id AND s.mark IS NOT NULL)::int AS marked
@@ -691,17 +822,19 @@ app.delete('/api/admin/tutors/:id', admin, async (req, res) => {
 
 // ---- Notes and online videos, one set per subject ----
 // List for ONE subject (no file contents, and NO video links: links are only given out by /video below).
+// Learners only see items from admins/lecturers or from tutors who teach at their school.
 app.get('/api/resources', anyUser, async (req, res) => {
   try {
     const sub = String(req.query.subject || '');
     if (!SUBJECTS.includes(sub)) return res.status(400).json({ error: 'Unknown subject.' });
     if (!canSee(req.user, sub)) return res.status(403).json({ error: 'You are not registered for this subject.' });
+    const learner = !isStaffRole(req.user.role);
     const r = await pool.query(`
       SELECT r.id,r.subject,r.title,r.description AS "desc",r.type,r.file_name AS "fileName",
              r.created_by AS "createdBy",u.name AS "by",r.created_at AS at
       FROM rise_resources r LEFT JOIN rise_users u ON u.id=r.created_by
-      WHERE r.subject=$1
-      ORDER BY r.created_at DESC`, [sub]);
+      WHERE r.subject=$1${learner ? ' AND ' + visSql('r', '$2') : ''}
+      ORDER BY r.created_at DESC`, learner ? [sub, req.user.school || ''] : [sub]);
     res.json({ resources: r.rows, canPost: canPost(req.user, sub) });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -711,23 +844,28 @@ app.get('/api/resources', anyUser, async (req, res) => {
 // Download one attached notes file (notes stay free)
 app.get('/api/resources/:id/file', anyUser, async (req, res) => {
   try {
-    const r = await pool.query('SELECT subject,file_name,file_data FROM rise_resources WHERE id=$1', [req.params.id]);
+    const r = await pool.query('SELECT subject,file_name,file_data,created_by FROM rise_resources WHERE id=$1', [req.params.id]);
     if (!r.rowCount || !r.rows[0].file_data) return res.status(404).json({ error: 'File not found.' });
     if (!canSee(req.user, r.rows[0].subject)) return res.status(403).json({ error: 'You are not registered for this subject.' });
+    if (!isStaffRole(req.user.role) && !(await creatorVisible(r.rows[0].created_by, req.user.school)))
+      return res.status(403).json({ error: 'These notes are not for your school.' });
     res.json({ name: r.rows[0].file_name, data: r.rows[0].file_data });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
-// Video link: staff always; learners ONLY while they have an active day pass
+// Video link: staff always; learners ONLY while they have an active day pass. Parents cannot watch.
 app.get('/api/resources/:id/video', anyUser, async (req, res) => {
   try {
-    const r = await pool.query("SELECT url,subject FROM rise_resources WHERE id=$1 AND type='video'", [req.params.id]);
+    if (req.user.isParent) return res.status(403).json({ error: 'Parents can see the list only. The learner watches the videos.' });
+    const r = await pool.query("SELECT url,subject,created_by FROM rise_resources WHERE id=$1 AND type='video'", [req.params.id]);
     if (!r.rowCount) return res.status(404).json({ error: 'Video not found.' });
     if (!canSee(req.user, r.rows[0].subject)) return res.status(403).json({ error: 'You are not registered for this subject.' });
 
     if (!isStaffRole(req.user.role)) {
+      if (!(await creatorVisible(r.rows[0].created_by, req.user.school)))
+        return res.status(403).json({ error: 'This video is not for your school.' });
       const p = await pool.query(
         "SELECT 1 FROM rise_passes WHERE user_id=$1 AND status='active' AND expires_at>NOW()",
         [req.user.id]
@@ -826,6 +964,8 @@ app.post('/api/pass/request', anyUser, async (req, res) => {
   try {
     if (isStaffRole(req.user.role))
       return res.status(400).json({ error: 'Staff do not need a pass.' });
+    if (req.user.isParent)
+      return res.status(403).json({ error: 'Parents have view-only access. The learner asks for the day pass.' });
 
     const act = await pool.query(
       "SELECT 1 FROM rise_passes WHERE user_id=$1 AND status='active' AND expires_at>NOW()",
@@ -979,7 +1119,7 @@ async function ensureComp() {
   `);
 }
 
-// Approved learners only
+// Approved learners only (parents are refused here: they have view-only access)
 async function learnerOnly(req, res, next) {
   try {
     const x = await pool.query(
@@ -1334,7 +1474,7 @@ app.patch('/api/comp/regs/:id', adminOnly, async (req, res) => {
 
 // ================= APPLICATIONS (learners and junior tutors) =================
 const GRADES = ['8', '9', '10', '11', '12'];
-const DOC_KEYS = ['report', 'matric', 'transcript', 'idcopy'];
+const DOC_KEYS = ['report', 'matric', 'transcript', 'idcopy', 'parentselfie'];
 
 async function ensureApps() {
   await pool.query(`
@@ -1359,8 +1499,11 @@ async function ensureApps() {
     );
     CREATE UNIQUE INDEX IF NOT EXISTS rise_app_type_said ON rise_applications(type, sa_id);
     ALTER TABLE rise_applications ADD COLUMN IF NOT EXISTS province TEXT, ADD COLUMN IF NOT EXISTS district TEXT, ADD COLUMN IF NOT EXISTS school TEXT, ADD COLUMN IF NOT EXISTS subjects TEXT[] NOT NULL DEFAULT '{}';
+    ALTER TABLE rise_applications ADD COLUMN IF NOT EXISTS parent_name TEXT, ADD COLUMN IF NOT EXISTS parent_status TEXT NOT NULL DEFAULT 'pending', ADD COLUMN IF NOT EXISTS schools TEXT[] NOT NULL DEFAULT '{}';
     ALTER TABLE rise_users ADD COLUMN IF NOT EXISTS student_number TEXT, ADD COLUMN IF NOT EXISTS province TEXT, ADD COLUMN IF NOT EXISTS district TEXT, ADD COLUMN IF NOT EXISTS school TEXT, ADD COLUMN IF NOT EXISTS parent_cell TEXT, ADD COLUMN IF NOT EXISTS subjects TEXT[] NOT NULL DEFAULT '{}';
+    ALTER TABLE rise_users ADD COLUMN IF NOT EXISTS learner_id TEXT, ADD COLUMN IF NOT EXISTS schools TEXT[] NOT NULL DEFAULT '{}';
     CREATE UNIQUE INDEX IF NOT EXISTS rise_users_sn ON rise_users(student_number) WHERE student_number IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS rise_users_parent_of ON rise_users(learner_id) WHERE role='parent';
     ALTER TABLE rise_assessments ADD COLUMN IF NOT EXISTS subject TEXT;
     ALTER TABLE rise_users ADD COLUMN IF NOT EXISTS photo TEXT, ADD COLUMN IF NOT EXISTS bio TEXT, ADD COLUMN IF NOT EXISTS gender TEXT;
     CREATE TABLE IF NOT EXISTS rise_notify_log(
@@ -1392,6 +1535,26 @@ function waNumber(c) {
   return /^27\d{9}$/.test(d) ? d : null;
 }
 
+// School names typed as a list or as "School A; School B": trimmed, no duplicates
+function cleanSchools(v) {
+  const arr = Array.isArray(v) ? v : String(v || '').split(';');
+  const seen = new Set();
+  const out = [];
+  for (const s of arr) {
+    const t = String(s || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+    if (t.length < 2 || seen.has(t.toLowerCase())) continue;
+    seen.add(t.toLowerCase());
+    out.push(t);
+  }
+  return out;
+}
+
+// A selfie: JPEG, PNG or WebP picture, up to about 1 MB. Accepts a data URL or { name, data }.
+function selfieData(v) {
+  const s = typeof v === 'string' ? v : (v && v.data);
+  return typeof s === 'string' && /^data:image\/(jpeg|png|webp);base64,/.test(s) && s.length <= 1500000 ? s : null;
+}
+
 // At most 10 applications per internet address per hour
 const applyHits = new Map();
 function applyLimited(ip) {
@@ -1402,7 +1565,7 @@ function applyLimited(ip) {
 }
 
 // ---- Public: apply (no login) ----
-app.get('/api/apply/subjects', (req, res) => res.json({ subjects: SUBJECTS, provinces: PROVINCES }));
+app.get('/api/apply/subjects', (req, res) => res.json({ subjects: SUBJECTS, provinces: PROVINCES, maxTutorSchools: MAX_TUTOR_SCHOOLS }));
 
 // Public: are applications open? The apply pages call this before showing the form.
 app.get('/api/apply/status', async (req, res) => {
@@ -1414,6 +1577,7 @@ app.get('/api/apply/status', async (req, res) => {
   }
 });
 
+// Learner application. Needs the parent's name and a selfie of the parent (checked later by the office).
 app.post('/api/apply/learner', async (req, res) => {
   try {
     if (!(await applyStatus()).learner)
@@ -1424,6 +1588,8 @@ app.post('/api/apply/learner', async (req, res) => {
     const saId = String(req.body.saId || '').replace(/\s/g, '');
     const cell = String(req.body.parentCell || '').trim();
     const report = req.body.report;
+    const parentName = String(req.body.parentName || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+    const parentSelfie = selfieData(req.body.parentSelfie);
     const province = PROVINCES.find(p => p.toLowerCase() === String(req.body.province || '').toLowerCase());
     const district = String(req.body.district || '').replace(/\s+/g, ' ').trim().slice(0, 80);
     const school = String(req.body.school || '').replace(/\s+/g, ' ').trim().slice(0, 120);
@@ -1434,6 +1600,8 @@ app.post('/api/apply/learner', async (req, res) => {
     if (district.length < 2) return res.status(400).json({ error: 'Enter the district.' });
     if (school.length < 2) return res.status(400).json({ error: 'Enter the school.' });
     if (!subjects.length) return res.status(400).json({ error: 'Choose at least one subject.' });
+    if (parentName.length < 2) return res.status(400).json({ error: 'Enter the parent or guardian\'s full name.' });
+    if (!parentSelfie) return res.status(400).json({ error: 'Add a clear selfie of the parent or guardian (a JPEG, PNG or WebP picture).' });
     if (!waNumber(cell)) return res.status(400).json({ error: 'Enter a valid South African cell number for the parent, for example 082 123 4567.' });
     if (!validSaId(saId)) return res.status(400).json({ error: 'The SA ID number is not valid. It must be 13 digits.' });
     if (!okFile(report)) return res.status(400).json({ error: 'Upload the report from the previous grade.' });
@@ -1446,8 +1614,10 @@ app.post('/api/apply/learner', async (req, res) => {
     // Random 10-digit student number (shown to the learner on screen; accepted automatically later)
     const sn = await newStudentNumber();
     await pool.query(
-      "INSERT INTO rise_applications(id,type,name,cell,sa_id,grade,student_number,docs,province,district,school,subjects) VALUES($1,'learner',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
-      [id(), name, cell.slice(0, 30), saId, grade, sn, JSON.stringify({ report: { name: report.name, data: report.data } }), province, district, school, subjects]
+      "INSERT INTO rise_applications(id,type,name,cell,sa_id,grade,student_number,docs,province,district,school,subjects,parent_name) VALUES($1,'learner',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",
+      [id(), name, cell.slice(0, 30), saId, grade, sn,
+       JSON.stringify({ report: { name: report.name, data: report.data }, parentselfie: { name: 'parent-selfie', data: parentSelfie } }),
+       province, district, school, subjects, parentName]
     );
     res.json({ ok: true, studentNumber: sn, autoAcceptHours: AUTO_ACCEPT_HOURS });
   } catch (e) {
@@ -1455,6 +1625,7 @@ app.post('/api/apply/learner', async (req, res) => {
   }
 });
 
+// Tutor application. Province, district and the school(s) (up to MAX_TUTOR_SCHOOLS) decide which learners the tutor reaches.
 app.post('/api/apply/tutor', async (req, res) => {
   try {
     if (!(await applyStatus()).tutor)
@@ -1465,10 +1636,14 @@ app.post('/api/apply/tutor', async (req, res) => {
     const saId = String(req.body.saId || '').replace(/\s/g, '');
     const cell = String(req.body.cell || '').trim();
     const subjects = cleanSubjects(req.body.subjects);
+    const province = PROVINCES.find(p => p.toLowerCase() === String(req.body.province || '').toLowerCase()) || null;
+    const district = String(req.body.district || '').replace(/\s+/g, ' ').trim().slice(0, 80) || null;
+    const schools = cleanSchools(req.body.schools);
     const { matric, transcript, idCopy } = req.body;
     if (name.length < 2) return res.status(400).json({ error: 'Enter your full name.' });
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'Enter a valid email address.' });
     if (!subjects.length) return res.status(400).json({ error: 'Choose the subject you are applying for.' });
+    if (schools.length > MAX_TUTOR_SCHOOLS) return res.status(400).json({ error: 'You can choose at most ' + MAX_TUTOR_SCHOOLS + ' schools.' });
     if (!waNumber(cell)) return res.status(400).json({ error: 'Enter a valid South African cell number, for example 082 123 4567.' });
     if (!validSaId(saId)) return res.status(400).json({ error: 'The SA ID number is not valid. It must be 13 digits.' });
     if (!okFile(matric) || !okFile(transcript) || !okFile(idCopy))
@@ -1483,12 +1658,12 @@ app.post('/api/apply/tutor', async (req, res) => {
     for (const x of ex.rows) await pool.query('DELETE FROM rise_applications WHERE id=$1', [x.id]);
 
     await pool.query(
-      "INSERT INTO rise_applications(id,type,name,email,cell,sa_id,docs,subjects) VALUES($1,'tutor',$2,$3,$4,$5,$6,$7)",
+      "INSERT INTO rise_applications(id,type,name,email,cell,sa_id,docs,subjects,province,district,schools) VALUES($1,'tutor',$2,$3,$4,$5,$6,$7,$8,$9,$10)",
       [id(), name, email, cell.slice(0, 30), saId, JSON.stringify({
         matric: { name: matric.name, data: matric.data },
         transcript: { name: transcript.name, data: transcript.data },
         idcopy: { name: idCopy.name, data: idCopy.data }
-      }), subjects]
+      }), subjects, province, district, schools]
     );
     res.json({ ok: true });
   } catch (e) {
@@ -1519,39 +1694,43 @@ app.patch('/api/admin/apply-status', adminOnly, async (req, res) => {
   }
 });
 
-// ---- Admins and lecturers: review applications ----
+// ---- Admins and lecturers: review applications (only the secret admin can decide: see canDecide) ----
 app.get('/api/admin/applications', admin, async (req, res) => {
   try {
     await autoAcceptLearners();
     const r = await pool.query(
       `SELECT id,type,name,email,cell,sa_id AS "saId",grade,student_number AS "studentNumber",status,
-              province,district,school,subjects,decided_by AS "decidedBy",
+              province,district,school,schools,subjects,decided_by AS "decidedBy",
+              parent_name AS "parentName",parent_status AS "parentStatus",
               created_at AS "at",
               CASE WHEN type='learner' AND status='pending'
                    THEN created_at + ($1::float * INTERVAL '1 hour') END AS "autoAt",
               (user_id IS NOT NULL) AS registered,
+              (user_id IS NOT NULL AND EXISTS (SELECT 1 FROM rise_users p WHERE p.role='parent' AND p.learner_id=rise_applications.user_id)) AS "parentRegistered",
               ARRAY(SELECT jsonb_object_keys(docs)) AS "docKeys"
        FROM rise_applications
        ORDER BY CASE status WHEN 'pending' THEN 0 WHEN 'accepted' THEN 1 ELSE 2 END, created_at DESC
        LIMIT 500`, [AUTO_ACCEPT_HOURS]);
-    res.json({ applications: r.rows, autoAcceptHours: AUTO_ACCEPT_HOURS });
+    res.json({ applications: r.rows, autoAcceptHours: AUTO_ACCEPT_HOURS, canDecide: await canDecideApps(req.user) });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
+// Documents and the parent selfie: admins and lecturers can look at them
 app.get('/api/admin/applications/:id/doc/:key', admin, async (req, res) => {
   try {
     if (!DOC_KEYS.includes(req.params.key)) return res.status(400).json({ error: 'Invalid document.' });
     const r = await pool.query('SELECT docs -> $2::text AS d FROM rise_applications WHERE id=$1', [req.params.id, req.params.key]);
     if (!r.rowCount || !r.rows[0].d) return res.status(404).json({ error: 'Document not found.' });
+    res.set('Cache-Control', 'no-store');
     res.json(r.rows[0].d);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
-app.patch('/api/admin/applications/:id', admin, async (req, res) => {
+app.patch('/api/admin/applications/:id', secretAdminOnly, async (req, res) => {
   try {
     const action = req.body.action;
     const q = await pool.query('SELECT * FROM rise_applications WHERE id=$1', [req.params.id]);
@@ -1568,6 +1747,16 @@ app.patch('/api/admin/applications/:id', admin, async (req, res) => {
       await pool.query("UPDATE rise_applications SET status='rejected',decided_at=NOW(),decided_by=$2 WHERE id=$1", [a.id, req.user.id]);
       return res.json({ ok: true });
     }
+    if (action === 'parent') {
+      // Verify or reject the parent selfie. Rejecting also removes any parent login for this learner.
+      if (a.type !== 'learner') return res.status(400).json({ error: 'Only learner applications have a parent.' });
+      const st = req.body.status;
+      if (!['verified', 'rejected'].includes(st)) return res.status(400).json({ error: 'Invalid parent status.' });
+      await pool.query('UPDATE rise_applications SET parent_status=$2 WHERE id=$1', [a.id, st]);
+      if (st === 'rejected' && a.user_id)
+        await pool.query("DELETE FROM rise_users WHERE role='parent' AND learner_id=$1", [a.user_id]);
+      return res.json({ ok: true });
+    }
     if (action === 'resend') {
       return res.status(400).json({ error: 'WhatsApp messages are switched off.' });
     }
@@ -1577,6 +1766,18 @@ app.patch('/api/admin/applications/:id', admin, async (req, res) => {
       const school = String(req.body.school || a.school || '').replace(/\s+/g, ' ').trim().slice(0, 120);
       await pool.query('UPDATE rise_applications SET province=$2,district=$3,school=$4 WHERE id=$1', [a.id, province, district, school]);
       if (a.user_id) await pool.query('UPDATE rise_users SET province=$2,district=$3,school=$4 WHERE id=$1', [a.user_id, province, district, school]);
+      return res.json({ ok: true });
+    }
+    if (action === 'tutorSchools') {
+      // Tutors: province, district and 1 to MAX_TUTOR_SCHOOLS schools. The names must match the learners' school names.
+      if (a.type !== 'tutor') return res.status(400).json({ error: 'Only tutor applications have schools.' });
+      const province = PROVINCES.find(p => p.toLowerCase() === String(req.body.province || '').toLowerCase()) || a.province;
+      const district = String(req.body.district || a.district || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+      const schools = cleanSchools(req.body.schools);
+      if (!schools.length) return res.status(400).json({ error: 'Enter at least one school.' });
+      if (schools.length > MAX_TUTOR_SCHOOLS) return res.status(400).json({ error: 'At most ' + MAX_TUTOR_SCHOOLS + ' schools.' });
+      await pool.query('UPDATE rise_applications SET province=$2,district=$3,schools=$4 WHERE id=$1', [a.id, province, district, schools]);
+      if (a.user_id) await pool.query('UPDATE rise_users SET province=$2,district=$3,schools=$4 WHERE id=$1', [a.user_id, province, district, schools]);
       return res.json({ ok: true });
     }
     if (action === 'subjects') {
@@ -1890,11 +2091,15 @@ app.patch('/api/profile/me', staff, async (req, res) => {
   }
 });
 
-app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
-
+// Start-up. The parent sign-off routes (signoff.js, in the same folder) are added once the tables exist,
+// and the catch-all route goes LAST so it cannot hide any /api route.
 init()
   .then(() => ensureComp())
   .then(() => ensureApps())
+  .then(() => {
+    require('./signoff')({ app, pool, anyUser, admin, id });
+    app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
+  })
   .then(() => autoAcceptLearners())
   .then(() => app.listen(PORT, '0.0.0.0', () => {
     console.log('RISE COLLECTIVE running on ' + PORT);
