@@ -15,7 +15,8 @@
  <label>Start time</label><input id="fs" type="time">
  <label>End time</label><input id="fe" type="time">
  <label>What is happening (for example Maths tutorial, Physics assessment)</label><input id="ft" maxlength="120">
- <label>Subject (optional)</label><input id="fj" maxlength="80">
+ <label>Subject (learners only see the slots of the subjects they write)</label>
+ <select id="fj"><option value="">All learners (no subject)</option></select>
  <label>Note (optional)</label><input id="fn" maxlength="300">
  <p><button class="btn" id="fsave" type="button">Add time slot</button> <button class="btn ghost" id="fcancel" type="button" hidden>Cancel change</button></p>
  <p><button class="btn sm ghost" id="fclear" type="button">Clear the whole week</button></p>
@@ -24,24 +25,51 @@
 <div id="list"></div>
 </main>
 <script src="app.js"></script><script>
-const u=session();if(!u)location.href='index.html';else $('#who').textContent=u.name;
-if(u&&['admin','lecturer','tutor'].includes(u.role))$('#bk').href='lecturer.html';
+const u=session();
+if(!u){
+ document.querySelector('main').innerHTML='<div class="card"><b>You are not logged in on this web address.</b><p>Address: '+esc(location.origin)+'</p><p>Log in on this same address, then open the Weekly Timetable square from your home screen.</p><p><a class="btn" href="index.html">Go to log in</a></p></div>';
+ throw new Error('not logged in');
+}
+$('#who').textContent=u.name;
+const IS_STAFF=['admin','lecturer','tutor'].includes(u.role);
+if(IS_STAFF)$('#bk').href='lecturer.html';
 const DAYS=['','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
-let D=null,EDIT=null;
+let D=null,EDIT=null,MY=null,SUBJ_LOADED=false;
+
+// The subjects this learner writes (null for staff, who see everything)
+async function loadMine(){
+ if(IS_STAFF||MY!==null)return;
+ try{const d=await api('/subjects');MY=new Set(d.subjects.map(s=>String(s.name).trim().toLowerCase()))}
+ catch(e){MY=new Set()}
+}
+
+// Fills the Subject dropdown in the form with the real subject names
+async function loadSubjectList(){
+ if(SUBJ_LOADED)return;
+ try{
+  const d=await api('/apply/subjects');
+  $('#fj').innerHTML='<option value="">All learners (no subject)</option>'+d.subjects.map(s=>'<option>'+esc(s)+'</option>').join('');
+  SUBJ_LOADED=true;
+ }catch(e){}
+}
+
+// A learner sees a slot only if it has no subject (general) or it is one of the subjects he or she writes
+const visible=x=>IS_STAFF||D.canEdit||!x.subject||(MY&&MY.has(String(x.subject).trim().toLowerCase()));
 
 async function load(){
  try{
   D=await api('/timetable');
+  await loadMine();
   $('#wk').hidden=!D.weekNote;$('#wk').textContent=D.weekNote||'';
   $('#upd').textContent=D.updatedAt?'Last changed '+fmt(D.updatedAt)+'. The timetable repeats until it is changed.':'';
   $('#ed').hidden=!D.canEdit;
-  if(D.canEdit&&document.activeElement!==$('#wnote'))$('#wnote').value=D.weekNote||'';
+  if(D.canEdit){await loadSubjectList();if(document.activeElement!==$('#wnote'))$('#wnote').value=D.weekNote||''}
   draw();
  }catch(e){$('#list').innerHTML='<div class="card"><b>Unable to load.</b><p>'+esc(e.message)+'</p></div>'}
 }
 
 function draw(){
- const by={};D.entries.forEach(x=>{(by[x.day]=by[x.day]||[]).push(x)});
+ const by={};D.entries.filter(visible).forEach(x=>{(by[x.day]=by[x.day]||[]).push(x)});
  let any=false;
  const h=[1,2,3,4,5,6,7].map(d=>{
   const L=by[d];
@@ -50,7 +78,7 @@ function draw(){
   const rows=L?L.map(x=>`<tr><td style="white-space:nowrap"><b>${esc(x.start)} – ${esc(x.end)}</b></td><td>${esc(x.title)}${x.subject?'<br><small>'+esc(x.subject)+'</small>':''}${x.note?'<br><small>'+esc(x.note)+'</small>':''}</td>${D.canEdit?`<td style="white-space:nowrap"><button class="btn sm ghost" onclick="edit('${x.id}')">Change</button> <button class="btn sm ghost" onclick="del('${x.id}')">Delete</button></td>`:''}</tr>`).join(''):`<tr><td colspan="3"><small>Nothing scheduled.</small></td></tr>`;
   return `<div class="card" style="margin-bottom:12px"><h3 style="margin-top:0">${DAYS[d]}</h3><div class="table"><table>${rows}</table></div></div>`;
  }).join('');
- $('#list').innerHTML=any||D.canEdit?h:'<p class="m">The timetable has not been set yet.</p>';
+ $('#list').innerHTML=any||D.canEdit?h:'<p class="m">'+(IS_STAFF?'The timetable has not been set yet.':'Nothing is scheduled for your subjects yet.')+'</p>';
 }
 
 function resetForm(){
@@ -60,7 +88,11 @@ function resetForm(){
 function edit(id){
  const x=D.entries.find(e=>e.id===id);if(!x)return;
  EDIT=id;$('#edT').textContent='Change this time slot';$('#fsave').textContent='Save change';$('#fcancel').hidden=false;
- $('#fd').value=x.day;$('#fs').value=x.start;$('#fe').value=x.end;$('#ft').value=x.title;$('#fj').value=x.subject||'';$('#fn').value=x.note||'';
+ $('#fd').value=x.day;$('#fs').value=x.start;$('#fe').value=x.end;$('#ft').value=x.title;$('#fn').value=x.note||'';
+ // Older slots may have a subject typed by hand that is not in the list: add it so it is not lost
+ const sel=$('#fj'),s=x.subject||'';
+ if(s&&![...sel.options].some(o=>o.value===s)){const o=document.createElement('option');o.textContent=s;sel.appendChild(o)}
+ sel.value=s;
  $('#ed').scrollIntoView({behavior:'smooth'});
 }
 async function del(id){
