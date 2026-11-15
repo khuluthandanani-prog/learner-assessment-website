@@ -7,19 +7,21 @@
  <p class="m">When an application type is closed, people who press Apply for it see "Applications are currently closed." Only the admin can change this.</p>
  <table>
   <tr><td style="padding:6px 12px 6px 0"><b>Learner applications:</b> <span id="stL" class="tag"></span></td><td><button class="btn sm" id="btL"></button></td></tr>
-  <tr><td style="padding:6px 12px 6px 0"><b>Tutoring teacher applications:</b> <span id="stT" class="tag"></span></td><td><button class="btn sm" id="btT"></button></td></tr>
+  <tr><td style="padding:6px 12px 6px 0"><b>Tutor applications:</b> <span id="stT" class="tag"></span></td><td><button class="btn sm" id="btT"></button></td></tr>
  </table>
 </div>
 
-<p>Open the documents, check them, then accept or reject. For learners, open the <b>Parent selfie</b> to see who the parent is before you accept. Learners are accepted automatically <b id="ah">24</b> hours after they apply, unless you accept or reject them first. Tutoring teacher applications always need you to accept them. Fix a spelling with <b>Edit location</b> (learners) or <b>Edit schools</b> (tutoring teachers). Learners only see the notes, videos and assessments of the tutoring teacher who teaches at their school, so the school names must match.</p>
-<label>Show: <select id="flt" onchange="draw()"><option value="all">All</option><option value="pending">Waiting for a decision</option><option value="learner">Learners</option><option value="tutor">Tutoring teachers</option></select></label>
+<p>Open the documents, check them, then accept or reject. Learners are accepted automatically <b id="ah">24</b> hours after they apply, unless you accept or reject them first. Tutor applications always need you to accept them. Fix a spelling with <b>Edit location</b> (learners) or <b>Edit schools</b> (tutors). A tutor can teach at any number of schools, and each school has its own subjects. Learners only see the notes, videos and assessments for a subject the tutor teaches <b>at the learner's school</b>, so the school names must match exactly.</p>
+<p><b>Parent verification:</b> open <b>Parent selfie</b>, check that it shows a real adult face, then press <b>Verify parent</b>. A parent can only register for parent access after you verify. Press <b>Reject parent</b> to refuse (this also removes any parent login that exists).</p>
+<p id="noDecide" class="card" hidden style="padding:10px 14px"><b>View only.</b> Only the secret admin can accept, reject or edit applications.</p>
+<label>Show: <select id="flt" onchange="draw()"><option value="all">All</option><option value="pending">Waiting for a decision</option><option value="learner">Learners</option><option value="tutor">Tutors</option></select></label>
 <div id="list"></div>
 </main>
 <script src="app.js"></script><script>
 const u=guard('admin');if(u&&u.role==='tutor')location.href='lecturer.html';
-let D=[],SUBJ=[],ST={learner:true,tutor:true},MAXS=2;
+let D=[],SUBJ=[],ST={learner:true,tutor:true},CAN=false;
 const KEY={report:'Report',matric:'Matric',transcript:'Transcript',idcopy:'ID copy',parentselfie:'Parent selfie'};
-api('/apply/subjects').then(d=>{SUBJ=d.subjects;if(d.maxTutorSchools)MAXS=d.maxTutorSchools}).catch(()=>{});
+api('/apply/subjects').then(d=>{SUBJ=d.subjects}).catch(()=>{});
 
 // Open / close box (admin only)
 function drawSwitch(){
@@ -38,13 +40,13 @@ async function loadSwitch(){
  catch(e){$('#sw').innerHTML='<b>Could not load the open/close setting.</b><p>'+esc(e.message)+'</p>'}
 }
 async function setOpen(type,open){
- if(!open&&!confirm('Close '+(type==='tutor'?'tutoring teacher':type)+' applications? People will see "Applications are currently closed."'))return;
+ if(!open&&!confirm('Close '+type+' applications? People will see "Applications are currently closed."'))return;
  try{const d=await api('/admin/apply-status',{method:'PATCH',body:JSON.stringify({type,open})});ST={learner:d.learner===true,tutor:d.tutor===true};drawSwitch()}
  catch(e){alert(e.message)}
 }
 
 async function render(){
- try{const d=await api('/admin/applications');D=d.applications;if(d.autoAcceptHours)$('#ah').textContent=d.autoAcceptHours;draw()}
+ try{const d=await api('/admin/applications');D=d.applications;CAN=d.canDecide===true;if(d.autoAcceptHours)$('#ah').textContent=d.autoAcceptHours;draw()}
  catch(e){$('#list').innerHTML='<div class="card"><b>Unable to load.</b><p>'+esc(e.message)+'</p></div>'}
 }
 
@@ -57,47 +59,67 @@ function statusCell(a){
  return h;
 }
 
-// School / District / Province column. Tutoring teachers have one or two schools; one with none cannot reach any learners yet.
+// A tutor's teaching: a list of {school, subjects[]}. Older records that only have a list of schools still show, without subjects.
+function teachingOf(a){
+ if(Array.isArray(a.teaching))return a.teaching;
+ return (a.schools||[]).map(s=>({school:s,subjects:[]}));
+}
+
+// School / District / Province column. A tutor shows each school with the subjects taught there.
 function placeCell(a){
  if(a.type==='learner')return esc(a.school||'—')+'<br>'+esc(a.district||'—')+'<br>'+esc(a.province||'—');
- const sc=a.schools||[];
- return (sc.length?sc.map(esc).join('<br>'):'<span class="tag bad">No schools yet</span>')+'<br>'+esc(a.district||'—')+'<br>'+esc(a.province||'—');
+ const t=teachingOf(a);
+ return (t.length
+  ?t.map(x=>'<b>'+esc(x.school)+'</b>: '+((x.subjects||[]).length?esc(x.subjects.join(', ')):'<span class="tag bad">no subjects</span>')).join('<br>')
+  :'<span class="tag bad">No schools yet</span>')+'<br>'+esc(a.district||'—')+'<br>'+esc(a.province||'—');
+}
+
+// Parent column: name and the state of the selfie check
+function parentCell(a){
+ if(a.type!=='learner')return '—';
+ const ps=a.parentStatus||'pending';
+ return esc(a.parentName||'—')+'<br><span class="tag '+(ps==='verified'?'ok':ps==='rejected'?'bad':'warn')+'">'+esc(ps)+'</span>'+(a.parentRegistered?'<br><small>Parent login created</small>':'');
 }
 
 function draw(){
+ $('#noDecide').hidden=CAN;
  const f=$('#flt').value;
  const L=D.filter(a=>f==='all'||(f==='pending'?a.status==='pending':a.type===f));
- $('#list').innerHTML=L.length?`<div class="card"><div class="table"><table><tr><th>Type</th><th>Name</th><th>Student no.</th><th>Grade</th><th>Subjects</th><th>School / District / Province</th><th>ID number</th><th>Cell</th><th>Email</th><th>Applied</th><th>Documents</th><th>Status</th><th>Actions</th></tr>${L.map(a=>{
+ $('#list').innerHTML=L.length?`<div class="card"><div class="table"><table><tr><th>Type</th><th>Name</th><th>Student no.</th><th>Grade</th><th>Subjects</th><th>School / District / Province</th><th>Parent</th><th>ID number</th><th>Cell</th><th>Email</th><th>Applied</th><th>Documents</th><th>Status</th><th>Actions</th></tr>${L.map(a=>{
   const st=a.status;
-  const docs=(a.docKeys||[]).map(k=>`<button class="btn sm ghost" onclick="dl('${a.id}','${k}')">${KEY[k]||k}</button>`).join(' ');
+  const docs=(a.docKeys||[]).map(k=>k==='parentselfie'
+   ?`<button class="btn sm ghost" onclick="viewSelfie('${a.id}')">${KEY[k]}</button>`
+   :`<button class="btn sm ghost" onclick="dl('${a.id}','${k}')">${KEY[k]||k}</button>`).join(' ');
   const acts=
    (st!=='accepted'?`<button class="btn sm" onclick="act('${a.id}','accept')">Accept</button> `:'')+
    ((st==='pending'||(st==='accepted'&&!a.registered))?`<button class="btn sm ghost" onclick="act('${a.id}','reject')">Reject</button> `:'')+
+   (a.type==='learner'&&a.parentStatus!=='verified'?`<button class="btn sm" onclick="parentAct('${a.id}','verified')">Verify parent</button> `:'')+
+   (a.type==='learner'&&a.parentStatus!=='rejected'?`<button class="btn sm ghost" onclick="parentAct('${a.id}','rejected')">Reject parent</button> `:'')+
    (a.type==='learner'?`<button class="btn sm ghost" onclick="editLoc('${a.id}')">Edit location</button> `:`<button class="btn sm ghost" onclick="editSchools('${a.id}')">Edit schools</button> `)+
    `<button class="btn sm ghost" onclick="editSub('${a.id}')">Edit subjects</button>`;
-  return `<tr><td>${a.type==='learner'?'Learner':'Tutoring teacher'}</td><td>${esc(a.name)}</td><td><b>${esc(a.studentNumber||'—')}</b></td><td>${esc(a.grade||'—')}</td><td>${esc((a.subjects||[]).join(', ')||'—')}</td><td>${placeCell(a)}</td><td>${esc(a.saId)}</td><td>${esc(a.cell)}</td><td>${esc(a.email||'—')}</td><td>${fmt(a.at)}</td><td>${docs}</td><td>${statusCell(a)}</td><td>${acts}</td></tr>`}).join('')}</table></div></div>`
+  return `<tr><td>${a.type==='learner'?'Learner':'Tutor'}</td><td>${esc(a.name)}</td><td><b>${esc(a.studentNumber||'—')}</b></td><td>${esc(a.grade||'—')}</td><td>${esc((a.subjects||[]).join(', ')||'—')}</td><td>${placeCell(a)}</td><td>${parentCell(a)}</td><td>${esc(a.saId)}</td><td>${esc(a.cell)}</td><td>${esc(a.email||'—')}</td><td>${fmt(a.at)}</td><td>${docs}</td><td>${statusCell(a)}</td><td>${CAN?acts:'<small>View only</small>'}</td></tr>`}).join('')}</table></div></div>`
  :'<p class="m">No applications.</p>'
 }
 
-// Photos (the parent selfie) open on screen; other documents download
 async function dl(id,key){
- try{
-  const d=await api('/admin/applications/'+id+'/doc/'+key);
-  if(/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+\/=]+$/.test(d.data)){
-   const o=document.createElement('div');
-   o.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:99;display:flex;align-items:center;justify-content:center;padding:16px;cursor:pointer';
-   const im=new Image();
-   im.src=d.data;
-   im.alt='';
-   im.style.cssText='max-width:100%;max-height:100%;border-radius:8px';
-   o.appendChild(im);
-   o.onclick=()=>o.remove();
-   document.body.appendChild(o);
-   return;
-  }
-  const a=document.createElement('a');a.href=d.data;a.download=d.name;document.body.appendChild(a);a.click();a.remove()
- }
+ try{const d=await api('/admin/applications/'+id+'/doc/'+key);const a=document.createElement('a');a.href=d.data;a.download=d.name;document.body.appendChild(a);a.click();a.remove()}
  catch(e){alert(e.message)}
+}
+async function viewSelfie(id){
+ try{
+  const d=await api('/admin/applications/'+id+'/doc/parentselfie');
+  const o=document.createElement('div');
+  o.style.cssText='position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.85);display:flex;align-items:center;justify-content:center;padding:16px;cursor:pointer';
+  const img=document.createElement('img');
+  img.alt='Parent selfie';img.src=d.data;
+  img.style.cssText='max-width:100%;max-height:100%;border-radius:10px;background:#fff';
+  o.appendChild(img);o.onclick=()=>o.remove();document.body.appendChild(o);
+ }catch(e){alert(e.message)}
+}
+async function parentAct(id,status){
+ if(status==='rejected'&&!confirm('Reject this parent? Any parent login for this learner will be removed.'))return;
+ await call(id,{action:'parent',status});
+ render();
 }
 async function call(id,body){
  try{return await api('/admin/applications/'+id,{method:'PATCH',body:JSON.stringify(body)})}
@@ -116,14 +138,25 @@ async function editLoc(id){
  await call(id,{action:'location',province,district,school});
  render();
 }
-// Tutoring teachers: province, district and 1 to MAXS schools (separate two schools with a semicolon)
+
+// Tutors: any number of schools, each with its own subjects.
+// Written as   School: Subject, Subject; Next school: Subject
 async function editSchools(id){
  const a=D.find(x=>x.id===id);
- const province=prompt('Province where this tutoring teacher teaches:',a.province||'');if(province===null)return;
+ const province=prompt('Province where this tutor teaches:',a.province||'');if(province===null)return;
  const district=prompt('District:',a.district||'');if(district===null)return;
- const v=prompt('School(s) this tutoring teacher teaches at. Maximum '+MAXS+'. Separate schools with a semicolon ( ; ):',(a.schools||[]).join('; '));if(v===null)return;
- const schools=v.split(';').map(s=>s.trim()).filter(Boolean);
- const r=await call(id,{action:'tutorSchools',province,district,schools});
+ const cur=teachingOf(a).map(x=>x.school+': '+(x.subjects||[]).join(', ')).join('; ');
+ const v=prompt('Schools and the subjects taught at each.\nFormat:  School: Subject, Subject; Next school: Subject\nAvailable subjects: '+SUBJ.join(', '),cur);
+ if(v===null)return;
+ const teaching=v.split(';').map(p=>{
+  const i=p.indexOf(':');
+  return {school:(i<0?p:p.slice(0,i)).trim(),subjects:(i<0?'':p.slice(i+1)).split(',').map(s=>s.trim()).filter(Boolean)};
+ }).filter(x=>x.school);
+ if(!teaching.length){alert('Enter at least one school.');return}
+ if(teaching.some(x=>!x.subjects.length)){alert('Every school needs at least one subject.');return}
+ const bad=SUBJ.length?teaching.flatMap(x=>x.subjects).filter(s=>!SUBJ.includes(s)):[];
+ if(bad.length){alert('These subjects are not in the subject list: '+[...new Set(bad)].join(', ')+'\nCheck the spelling.');return}
+ const r=await call(id,{action:'tutorSchools',province,district,teaching});
  if(r)alert('Saved.');
  render();
 }
