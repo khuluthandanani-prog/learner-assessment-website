@@ -1,0 +1,98 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Parent Sign-off | RISE COLLECTIVE</title><link rel="stylesheet" href="style.css"><link rel="stylesheet" href="tiles.css">
+<style>
+.ov{position:fixed;inset:0;z-index:9999;background:rgba(10,18,45,.92);display:none;flex-direction:column;-webkit-user-select:none;user-select:none}
+.ov.open{display:flex}
+.ov .bar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px;background:#14161a;color:#fff}
+.ov .bar b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ov .body{flex:1;overflow:auto;padding:14px;color:#fff}
+.ov .sheet{background:#fff;color:#111;border-radius:12px;padding:14px;max-width:900px;margin:0 auto 14px}
+.ov canvas{display:block;margin:0 auto 12px;max-width:100%;height:auto;background:#fff;pointer-events:none}
+.ov video,.ov .shot{display:block;margin:0 auto 12px;max-width:100%;width:340px;border-radius:12px;background:#000;transform:scaleX(-1)}
+.ov .shot{transform:none}
+.ov .msg{padding:18px;text-align:center}
+@media print{body{display:none!important}}
+</style></head><body>
+<header class="top"><div class="brand"><span class="logo"></span><div>RISE COLLECTIVE<small>PARENT SIGN-OFF</small></div></div><div>👤 <span id="who"></span> <button class="btn sm" onclick="logout()">Logout</button></div></header><main>
+<a class="back" href="learner.html">← Home</a><h2>Parent sign-off</h2>
+<p id="intro" class="m"></p><div id="alert"></div><div id="list" class="boxes"></div></main>
+
+<div id="wm" class="ov"><div class="bar"><b id="wt"></b><button class="btn sm" id="wc">Close</button></div><div class="body" id="wb"></div></div>
+<div id="sm" class="ov"><div class="bar"><b>Sign with a selfie</b><button class="btn sm" id="sc">Cancel</button></div><div class="body" id="sb"></div></div>
+
+<script src="app.js"></script><script>
+const u=session();if(!u)location.href='index.html';else $('#who').textContent=u.name;
+let D=null,STREAM=null;
+
+/* ---------- list ---------- */
+async function load(){
+ try{
+  D=await api('/signoff/me');
+  $('#intro').textContent=D.isParent
+   ?'Open each marked piece of work, read it, then sign it with a selfie. Sign within '+D.days+' days of the mark.'
+   :'Your parent or guardian must sign each marked piece of work with a selfie within '+D.days+' days. You can look at the list here.';
+  $('#alert').innerHTML=D.reminder?'<div class="card" style="border-color:#c0392b"><b>Reminder:</b> some work is overdue for signing. Sign it by '+fmt(D.excludeAfter)+' or the learner can be excluded from the programme.</div>':'';
+  $('#list').innerHTML=D.items.length?D.items.map(card).join(''):'<p class="m">No marked work yet. Marked assessments appear here.</p>';
+ }catch(e){$('#list').innerHTML='<div class="card"><b>Unable to load.</b><p>'+esc(e.message)+'</p></div>'}
+}
+function card(x){
+ const pct=x.total?Math.round(x.mark/x.total*100):0;
+ const st=x.signedAt?'<span class="tag ok">Signed</span>':(x.overdue?'<span class="tag bad">Overdue</span>':'<span class="tag warn">Not signed</span>');
+ const btn=(D.isParent&&!x.signedAt)?'Open and sign':'View work';
+ return `<div class="card"><div class="row"><h3>${esc(x.title)}</h3>${st}</div><p class="m">${esc(x.subject||'')} · Marked ${fmt(x.markedAt)}${x.signedAt?' · Signed '+fmt(x.signedAt):' · Sign by '+fmt(x.dueAt)}</p><p><b>${x.mark}/${x.total}</b> (${pct}%)</p><button class="btn sm" onclick="openWork('${x.id}')">${btn}</button></div>`;
+}
+
+/* ---------- read-only view of the work (pages drawn on a canvas, no download) ---------- */
+const PDFJS='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/';let pdfReady;
+function loadPdfJs(){return pdfReady||(pdfReady=new Promise((ok,no)=>{const s=document.createElement('script');s.src=PDFJS+'pdf.min.js';s.onload=()=>{pdfjsLib.GlobalWorkerOptions.workerSrc=PDFJS+'pdf.worker.min.js';ok()};s.onerror=()=>{pdfReady=null;no(new Error('Could not load the viewer. Check your internet connection.'))};document.head.appendChild(s)}))}
+function kind(f){const n=(f.name||'').toLowerCase(),m=/^data:([^;,]+)/.exec(f.data||''),t=m?m[1]:'';if(t==='application/pdf'||n.endsWith('.pdf'))return'pdf';if(t.startsWith('image/')||/\.(png|jpe?g|gif|webp)$/.test(n))return'img';return'other'}
+function bytes(d){const b=atob(d.startsWith('data:')?d.slice(d.indexOf(',')+1):d),a=new Uint8Array(b.length);for(let i=0;i<b.length;i++)a[i]=b.charCodeAt(i);return a}
+function stamp(c){const x=c.getContext('2d');x.save();x.globalAlpha=.13;x.fillStyle='#000';x.font=Math.max(16,Math.round(c.width/22))+'px sans-serif';x.textAlign='center';x.rotate(-Math.PI/6);const t=(u.name||'')+'  '+new Date().toLocaleDateString('en-ZA');for(let y=-c.width;y<c.height*1.6;y+=Math.round(c.width/4))for(let xx=-c.height;xx<c.width*1.2;xx+=Math.round(c.width/1.4))x.fillText(t,xx,y);x.restore()}
+async function drawFile(f,box){
+ const k=kind(f);
+ if(k==='pdf'){await loadPdfJs();const pdf=await pdfjsLib.getDocument({data:bytes(f.data)}).promise;const w=Math.min(box.clientWidth,860),dpr=Math.min(window.devicePixelRatio||1,2);
+  for(let i=1;i<=pdf.numPages;i++){const pg=await pdf.getPage(i),b=pg.getViewport({scale:1}),vp=pg.getViewport({scale:w/b.width*dpr});const c=document.createElement('canvas');c.width=vp.width;c.height=vp.height;c.style.width=w+'px';box.appendChild(c);await pg.render({canvasContext:c.getContext('2d'),viewport:vp}).promise;stamp(c)}}
+ else if(k==='img'){const img=new Image();await new Promise((ok,no)=>{img.onload=ok;img.onerror=()=>no(new Error('This image could not be opened.'));img.src=f.data});const c=document.createElement('canvas');c.width=img.naturalWidth;c.height=img.naturalHeight;c.getContext('2d').drawImage(img,0,0);stamp(c);box.appendChild(c)}
+ else box.innerHTML='<p class="msg">This file type cannot be shown on the site.</p>';
+}
+async function openWork(id){
+ $('#wt').textContent='Work';$('#wb').innerHTML='<p class="msg">Loading…</p>';$('#wm').classList.add('open');document.body.style.overflow='hidden';
+ try{
+  const w=await api('/signoff/work/'+id);$('#wt').textContent=w.title;
+  const pct=w.total?Math.round(w.mark/w.total*100):0;
+  $('#wb').innerHTML=`<div class="sheet"><h3 style="margin-top:0">${esc(w.title)} <small>(${esc(w.subject||'')})</small></h3><p><b>Mark: ${w.mark}/${w.total} (${pct}%)</b></p><p><b>Tutor feedback:</b> ${esc(w.feedback||'None')}</p>${w.text?`<p><b>Learner’s answer:</b></p><p style="white-space:pre-wrap">${esc(w.text)}</p>`:''}${w.signedAt?`<p><span class="tag ok">Signed ${fmt(w.signedAt)}</span></p>`:''}${w.canSign?`<button class="btn" id="signBtn">✍️ Sign with a selfie</button><p class="m">By signing you confirm that you have seen this work and that the selfie shows you.</p>`:''}</div><div id="fb"></div>`;
+  if(w.canSign)$('#signBtn').onclick=()=>startSign(id);
+  if(w.file){try{await drawFile(w.file,$('#fb'))}catch(e){$('#fb').innerHTML='<p class="msg">'+esc(e.message)+'</p>'}}
+ }catch(e){$('#wb').innerHTML='<p class="msg">'+esc(e.message)+'</p>'}
+}
+function closeWork(){$('#wm').classList.remove('open');$('#wb').innerHTML='';document.body.style.overflow=''}
+$('#wc').onclick=closeWork;
+
+/* ---------- selfie: live camera, so the photo is taken now ---------- */
+function stopCam(){if(STREAM){STREAM.getTracks().forEach(t=>t.stop());STREAM=null}}
+function closeSign(){stopCam();$('#sm').classList.remove('open');$('#sb').innerHTML=''}
+$('#sc').onclick=closeSign;
+function toJpeg(src,w,h){const max=720,r=Math.min(1,max/Math.max(w,h));const c=document.createElement('canvas');c.width=Math.round(w*r);c.height=Math.round(h*r);c.getContext('2d').drawImage(src,0,0,c.width,c.height);return c.toDataURL('image/jpeg',.8)}
+async function startSign(id){
+ $('#sm').classList.add('open');
+ $('#sb').innerHTML='<div class="sheet" style="text-align:center"><p>Look at the camera in good light, with your face clear. Then press <b>Take selfie</b>.</p><video id="cam" autoplay playsinline muted></video><div id="camBtns"><button class="btn" id="snap">📷 Take selfie</button></div><p id="camErr" class="m"></p></div>';
+ try{
+  STREAM=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user'},audio:false});
+  const v=$('#cam');v.srcObject=STREAM;await v.play();
+  $('#snap').onclick=()=>review(id,toJpeg(v,v.videoWidth,v.videoHeight));
+ }catch(e){
+  // No camera access: let the phone camera take the photo instead
+  $('#cam').remove();$('#camBtns').innerHTML='<input type="file" id="cf" accept="image/*" capture="user">';
+  $('#camErr').textContent='The camera could not be opened here. Take the selfie with your phone camera instead.';
+  $('#cf').onchange=ev=>{const f=ev.target.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{const i=new Image();i.onload=()=>review(id,toJpeg(i,i.width,i.height));i.onerror=()=>alert('That photo could not be opened.');i.src=r.result};r.readAsDataURL(f)};
+ }
+}
+function review(id,data){
+ stopCam();
+ $('#sb').innerHTML=`<div class="sheet" style="text-align:center"><p>Is this clearly you?</p><img class="shot" src="${data}" alt="Your selfie"><button class="btn" id="go">✔ Yes, sign the work</button> <button class="btn ghost" id="again">Take again</button></div>`;
+ $('#again').onclick=()=>startSign(id);
+ $('#go').onclick=async()=>{try{$('#go').disabled=true;await api('/signoff/'+id,{method:'POST',body:JSON.stringify({selfie:data})});closeSign();closeWork();alert('Signed. Thank you.');load()}catch(e){$('#go').disabled=false;alert(e.message)}};
+}
+document.addEventListener('contextmenu',e=>{if(e.target.closest('.ov'))e.preventDefault()});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeSign();closeWork()}if((e.ctrlKey||e.metaKey)&&['p','s'].includes(e.key.toLowerCase())&&document.querySelector('.ov.open'))e.preventDefault()});
+load();
+</script></body></html>
