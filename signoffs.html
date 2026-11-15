@@ -1,0 +1,36 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Parent Sign-offs | RISE COLLECTIVE</title><link rel="stylesheet" href="style.css"><link rel="stylesheet" href="tiles.css"></head><body>
+<header class="top"><div class="brand"><span class="logo"></span><div>RISE COLLECTIVE<small>PARENT SIGN-OFFS</small></div></div><div>👤 <span id="who"></span> <button class="btn sm" onclick="logout()">Logout</button></div></header><main>
+<a class="back" href="lecturer.html">← Home</a><h2>Parent sign-offs</h2>
+<p class="m" id="rules"></p>
+<div id="list"></div>
+</main>
+<script src="app.js"></script><script>
+const u=guard('admin');if(u&&u.role==='tutor')location.href='lecturer.html';
+const TAG={waiting:['warn','Waiting for parent'],overdue:['bad','Overdue (reminder shown)'],reminded:['bad','Reminded'],exclusion_due:['bad','Exclusion due']};
+let R=[];
+async function load(){
+ try{
+  const d=await api('/admin/signoffs');R=d.rows;
+  $('#rules').textContent='Parents must sign marked work within '+d.days+' days. After that the parent sees a reminder. If the work is still unsigned '+d.graceDays+' days after the reminder, exclusion is due. You decide whether to exclude.';
+  $('#list').innerHTML=R.length?`<div class="card"><div class="table"><table><tr><th>Student no.</th><th>School</th><th>Unsigned</th><th>Overdue</th><th>Oldest marked</th><th>Reminded</th><th>Parent login</th><th>Status</th><th>Actions</th></tr>${R.map(x=>{
+   const t=TAG[x.state]||['',''+x.state];
+   return `<tr><td><b>${esc(x.studentNumber||'—')}</b></td><td>${esc(x.school||'—')}<br><small>${esc(x.district||'')}</small></td><td>${x.unsigned}</td><td>${x.overdue}</td><td>${fmt(x.oldest)}</td><td>${x.remindedAt?fmt(x.remindedAt):'—'}</td><td>${x.parentRegistered?'Yes':'<span class="tag bad">None yet</span>'}</td><td><span class="tag ${t[0]}">${esc(t[1])}</span></td><td><button class="btn sm ghost" onclick="cmp('${x.id}')">Compare selfies</button> ${x.status==='blocked'?'<span class="tag bad">Excluded</span>':`<button class="btn sm ghost" onclick="excl('${x.id}','${esc(x.studentNumber||'')}')">Exclude learner</button>`}</td></tr>`}).join('')}</table></div></div>`
+   :'<p class="m">Nothing waiting. All marked work is signed.</p>';
+ }catch(e){$('#list').innerHTML='<div class="card"><b>Unable to load.</b><p>'+esc(e.message)+'</p></div>'}
+}
+async function excl(id,sn){
+ if(!confirm('Exclude learner '+sn+'? Their access stops. Make sure the parent has had the written notice and the time to reply.'))return;
+ try{await api('/admin/users/'+id,{method:'PATCH',body:JSON.stringify({status:'blocked'})});load()}catch(e){alert(e.message)}
+}
+async function cmp(id){
+ try{
+  const d=await api('/admin/signoffs/'+id);
+  const o=document.createElement('div');
+  o.style.cssText='position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.88);overflow:auto;padding:16px';
+  const fig=(src,cap)=>`<figure style="margin:0;text-align:center;color:#fff"><img src="${src}" alt="" style="width:220px;max-width:100%;border-radius:10px;background:#fff"><figcaption style="font-size:.8rem">${esc(cap)}</figcaption></figure>`;
+  o.innerHTML='<div style="max-width:1000px;margin:0 auto"><p style="color:#fff"><b>Compare by eye.</b> First picture: selfie from the application. The others: selfies taken when signing. Click anywhere to close.</p><div style="display:flex;flex-wrap:wrap;gap:14px">'+(d.registration?fig(d.registration,'Application selfie'):'<p style="color:#fff">No application selfie on file.</p>')+d.signoffs.map(s=>fig(s.selfie,s.title+' · '+fmt(s.signedAt))).join('')+'</div></div>';
+  o.onclick=()=>o.remove();document.body.appendChild(o);
+ }catch(e){alert(e.message)}
+}
+load();
+</script></body></html>
