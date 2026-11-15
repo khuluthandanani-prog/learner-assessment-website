@@ -58,13 +58,12 @@
 <label>District</label><input name="dist" placeholder="e.g. Tshwane South" required>
 <label>School</label><input name="school" required>
 <label>Subjects you are applying for</label><div id="lsub"></div>
-<label>Parent / guardian cell number (we send WhatsApp updates here)</label>
-<input name="cell" type="tel" placeholder="082 123 4567" required>
 
-<label>Parent password (the parent logs in with the learner's student number and this password to see what the learner sees)</label>
-<input name="ppass" type="password" minlength="6" autocomplete="new-password" required>
-<label>Repeat the parent password</label>
-<input name="ppass2" type="password" minlength="6" autocomplete="new-password" required>
+<label>Parent / guardian full name</label>
+<input name="pname" autocomplete="off" required>
+
+<label>Parent / guardian cell number</label>
+<input name="cell" type="tel" placeholder="082 123 4567" required>
 
 <label>Parent selfie (the parent takes a clear photo of their own face)</label>
 <input name="selfie" type="file" accept="image/*" capture="user" required>
@@ -74,7 +73,7 @@
 <label>Report from the previous grade (max 1.5MB)</label>
 <input name="rep" type="file" required>
 
-<p class="m">By applying you agree that RISE COLLECTIVE may keep these details and documents for the application and may contact the parent on WhatsApp, including about new notes, videos and assessments in the chosen subjects. The parent's photo is kept only so that the office can check who the parent is, and only admins can see it.</p>
+<p class="m">By applying you agree that RISE COLLECTIVE may keep these details and documents for the application. The parent's photo is kept only so that the office can check who the parent is, and only admins and lecturers can see it. After the office verifies the parent, the parent can register for parent access on the login page.</p>
 <button class="btn">Submit application</button>
 </form>
 </div>
@@ -84,10 +83,9 @@
 <form id="tf2">
 <label>Full name</label><input name="nm" required>
 <label>Email (you will register with this email)</label><input name="email" type="email" required>
-<label>Cell number (WhatsApp)</label><input name="cell" type="tel" placeholder="082 123 4567" required>
+<label>Cell number</label><input name="cell" type="tel" placeholder="082 123 4567" required>
 <label>SA ID number (13 digits)</label>
 <input name="idn" inputmode="numeric" maxlength="13" pattern="[0-9]{13}" required>
-<label>Subject you are applying for</label><div id="tsub"></div>
 
 <label>Province where you will tutor</label>
 <select name="prov" required>
@@ -100,15 +98,10 @@
 <label>District where you will tutor</label>
 <input name="dist" placeholder="e.g. Ngaka Modiri Molema" required>
 
-<label>School you will tutor at</label>
-<input name="school1" placeholder="Full school name" required>
-
-<div id="school2Box">
-<label>Second school (optional)</label>
-<input name="school2" placeholder="Full school name, if you will tutor at a second school">
-</div>
-
-<p class="m">Write each school name in full, the same way the learners write it on their applications. Learners will only see the notes, videos and assessments of the tutoring teacher who teaches at their school.</p>
+<h4 style="margin-bottom:0">Schools and subjects</h4>
+<p class="m">Add every school you teach at, and tick the subjects you teach <b>at that school</b>. Write each school name in full, the same way the learners write it on their applications. A learner only sees your notes, videos and assessments for a subject you teach at the learner's own school.</p>
+<div id="schools"></div>
+<button type="button" class="btn sm ghost" id="addSchool">+ Add another school</button>
 
 <label>Matric certificate (max 1.5MB)</label><input name="matric" type="file" required>
 <label>Academic transcript (max 1.5MB)</label><input name="trans" type="file" required>
@@ -128,12 +121,12 @@
 // The server returns { learner: true/false, tutor: true/false }.
 // The server still rejects submissions when a type is closed.
 let openState = { learner: true, tutor: true };
+let SUBJ = [];
 
 async function refreshApplicationStatus() {
   try {
     const r = await fetch('/api/apply/status', { cache: 'no-store' });
     if (!r.ok) throw new Error('status unavailable');
-
     const d = await r.json();
     openState = { learner: d.learner === true, tutor: d.tutor === true };
   } catch (e) {
@@ -153,16 +146,29 @@ async function refreshApplicationStatus() {
 
 refreshApplicationStatus();
 
+// One block per school: the school name and the subjects taught there
+function addSchoolBlock() {
+  const d = document.createElement('div');
+  d.className = 'sch card';
+  d.style.cssText = 'margin:10px 0;padding:12px';
+  d.innerHTML =
+    '<label>School (full name)</label><input class="sn" placeholder="Full school name">' +
+    '<label>Subjects you teach at this school</label><div>' +
+    SUBJ.map(s => `<label style="font-weight:400"><input type="checkbox" value="${esc(s)}" style="width:auto"> ${esc(s)}</label>`).join('') +
+    '</div><button type="button" class="btn sm ghost rm" style="margin-top:8px">Remove this school</button>';
+  d.querySelector('.rm').onclick = () => {
+    if (document.querySelectorAll('#schools .sch').length > 1) d.remove();
+  };
+  $('#schools').appendChild(d);
+}
+$('#addSchool').onclick = addSchoolBlock;
+
 api('/apply/subjects').then(d => {
-  const h = d.subjects.map(s =>
+  SUBJ = d.subjects;
+  $('#lsub').innerHTML = SUBJ.map(s =>
     `<label style="font-weight:400"><input type="checkbox" name="subj" value="${esc(s)}" style="width:auto"> ${esc(s)}</label>`
   ).join('');
-
-  $('#lsub').innerHTML = h;
-  $('#tsub').innerHTML = h;
-
-  // If the server allows only one school per tutor, hide the second school box
-  if (d.maxTutorSchools && d.maxTutorSchools < 2) $('#school2Box').hidden = true;
+  addSchoolBlock();
 }).catch(() => {});
 
 const picked = form =>
@@ -196,10 +202,9 @@ function readSelfie(file) {
   });
 }
 
-$$('.tile[data-f]').forEach(t => {
+document.querySelectorAll('.tile[data-f]').forEach(t => {
   t.onclick = e => {
     e.preventDefault();
-
     const k = t.dataset.f;
     const type = k === 'lc' ? 'learner' : 'tutor';
 
@@ -211,7 +216,6 @@ $$('.tile[data-f]').forEach(t => {
     $('#lc').hidden = k !== 'lc';
     $('#tc').hidden = k !== 'tc';
     $('#res').hidden = true;
-
     $('#' + k).scrollIntoView({ behavior: 'smooth' });
   };
 });
@@ -228,9 +232,7 @@ $('#lf2').onsubmit = async e => {
   const subs = picked(e.target);
 
   if (!subs.length) return alert('Choose at least one subject.');
-
-  if (f.ppass.value.length < 6) return alert('The parent password must be at least 6 characters.');
-  if (f.ppass.value !== f.ppass2.value) return alert('The two parent passwords do not match.');
+  if (f.pname.value.trim().length < 2) return alert('Enter the parent or guardian\'s full name.');
 
   let rep, selfie;
 
@@ -254,8 +256,8 @@ $('#lf2').onsubmit = async e => {
         district: f.dist.value,
         school: f.school.value,
         subjects: subs,
+        parentName: f.pname.value,
         parentCell: f.cell.value,
-        parentPassword: f.ppass.value,
         parentSelfie: selfie,
         saId: f.idn.value,
         report: rep
@@ -273,7 +275,7 @@ $('#lf2').onsubmit = async e => {
       '<div style="font-size:2.2rem;font-weight:700;letter-spacing:2px;color:#111">' +
       esc(x.studentNumber) + '</div>' +
       '<p><b>Write this number down.</b> You log in with it. Your application is accepted after review (or automatically after ' + esc(x.autoAcceptHours) + ' hours). Then press <b>Register</b> on the login page and use this student number.</p>' +
-      '<p>The parent logs in with the same student number and the <b>parent password</b> chosen on this form, and sees what the learner sees.</p>' +
+      '<p>After the office has verified the parent\'s selfie, the parent can press <b>Register</b>, choose <b>Parent / Guardian</b> and use the learner\'s student number and the cell number on this application.</p>' +
       '<a class="btn" href="index.html?register">Go to Register</a>';
 
     r.scrollIntoView({ behavior: 'smooth' });
@@ -292,18 +294,22 @@ $('#tf2').onsubmit = async e => {
   }
 
   const f = e.target.elements;
-  const subs = picked(e.target);
 
-  if (!subs.length) return alert('Choose the subject you are applying for.');
-
-  // One school is required; the second is optional
-  const schools = [f.school1.value, f.school2.value]
-    .map(s => s.replace(/\s+/g, ' ').trim())
-    .filter(Boolean);
+  // Each school with the subjects taught there
+  const teaching = [...document.querySelectorAll('#schools .sch')].map(b => ({
+    school: b.querySelector('.sn').value.replace(/\s+/g, ' ').trim(),
+    subjects: [...b.querySelectorAll('input[type=checkbox]:checked')].map(x => x.value)
+  })).filter(x => x.school);
 
   if (!f.prov.value) return alert('Choose the province where you will tutor.');
   if (!f.dist.value.trim()) return alert('Enter the district where you will tutor.');
-  if (!schools.length) return alert('Enter the school you will tutor at.');
+  if (!teaching.length) return alert('Enter at least one school.');
+  const bare = teaching.find(x => !x.subjects.length);
+  if (bare) return alert('Choose at least one subject for ' + bare.school + '.');
+  const names = teaching.map(x => x.school.toLowerCase());
+  if (new Set(names).size !== names.length) return alert('The same school is listed twice. Tick all its subjects in one block.');
+
+  const subs = [...new Set(teaching.flatMap(x => x.subjects))];
 
   let m, t, i;
 
@@ -328,7 +334,7 @@ $('#tf2').onsubmit = async e => {
         subjects: subs,
         province: f.prov.value,
         district: f.dist.value,
-        schools: schools,
+        teaching: teaching,
         matric: m,
         transcript: t,
         idCopy: i
@@ -337,12 +343,14 @@ $('#tf2').onsubmit = async e => {
 
     $('#tc').hidden = true;
     e.target.reset();
+    $('#schools').innerHTML = '';
+    addSchoolBlock();
 
     const r = $('#res');
     r.hidden = false;
 
     r.innerHTML = '<h3>✅ Application received</h3>' +
-      '<p>An admin will review your documents. When it is accepted, press <b>Register</b> on the login page, choose <b>Tutoring Teacher</b> and use the same email you applied with.</p>' +
+      '<p>An admin will review your documents. When it is accepted, press <b>Register</b> on the login page, choose <b>Junior Tutor</b> and use the same email you applied with.</p>' +
       '<a class="btn" href="index.html">Back to login</a>';
 
     r.scrollIntoView({ behavior: 'smooth' });
