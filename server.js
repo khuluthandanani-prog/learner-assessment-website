@@ -132,7 +132,7 @@ async function init() {
   // Remove the variable afterwards, otherwise data is wiped on every restart.
   if (process.env.RESET_DATABASE === 'true') {
     console.log('RESET_DATABASE=true -> wiping all data');
-    await pool.query('DROP TABLE IF EXISTS rise_signoffs, rise_work_views, rise_signoff_notices, rise_notify_log, rise_applications, rise_comp_subs, rise_comp_papers, rise_comp_regs, rise_settings, rise_video_log, rise_passes, rise_resources, rise_submissions, rise_assessments, rise_users CASCADE');
+    await pool.query('DROP TABLE IF EXISTS rise_timetable, rise_signoffs, rise_work_views, rise_signoff_notices, rise_notify_log, rise_applications, rise_comp_subs, rise_comp_papers, rise_comp_regs, rise_settings, rise_video_log, rise_passes, rise_resources, rise_submissions, rise_assessments, rise_users CASCADE');
     await pool.query('DROP SEQUENCE IF EXISTS rise_student_seq');
   }
 
@@ -254,8 +254,8 @@ async function adminOnly(req, res, next) {
 }
 
 // The SECRET ADMIN is the one account created (or upgraded) with ADMIN_SETUP_CODE; its id is kept in rise_settings.
-// Only the secret admin may accept, reject or change applications. Until a secret admin exists, any admin may,
-// so the site can never be locked out.
+// Only the secret admin may accept, reject or change applications and set the weekly timetable.
+// Until a secret admin exists, any admin may, so the site can never be locked out.
 async function canDecideApps(u) {
   if (!u || u.role !== 'admin') return false;
   const s = await pool.query("SELECT value FROM rise_settings WHERE key='secret_admin_used'");
@@ -2091,13 +2091,15 @@ app.patch('/api/profile/me', staff, async (req, res) => {
   }
 });
 
-// Start-up. The parent sign-off routes (signoff.js, in the same folder) are added once the tables exist,
-// and the catch-all route goes LAST so it cannot hide any /api route.
+// Start-up. The parent sign-off routes (signoff.js) and the weekly timetable routes (timetable.js),
+// both in the same folder, are added once the tables exist, and the catch-all route goes LAST
+// so it cannot hide any /api route.
 init()
   .then(() => ensureComp())
   .then(() => ensureApps())
   .then(() => {
     require('./signoff')({ app, pool, anyUser, admin, id });
+    require('./timetable')({ app, pool, anyUser, secretAdminOnly, canDecideApps, id });
     app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
   })
   .then(() => autoAcceptLearners())
