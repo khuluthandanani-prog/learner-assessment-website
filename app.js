@@ -44,6 +44,8 @@ function addLinksInner(){
  if(onLec&&u.role==='admin'){const a=addTile('shareLink','sharing.html','🚩','Sharing Report','Accounts flagged for sharing');if(a)api('/admin/sharing').then(d=>{if(d.flagged>0){const c=$('.count',a);c.textContent=d.flagged;c.hidden=false;a.style.borderColor='#c0392b'}}).catch(()=>{})}
  // Everyone logged in: subjects (notes and videos for each subject)
  if(onAny)addTile('resLink','subjects.html','📚','Subjects','Notes and videos for each subject');
+ // Everyone logged in (learners, parents and staff): the weekly timetable. Only the secret admin can change it.
+ if(onAny)addTile('timetableLink','timetable.html','🗓️','Weekly Timetable','See the week at RISE COLLECTIVE');
  // Competitions: learners register and write; admin and lecturers set papers and see marks
  if(onLrn)addTile('compLink','comp.html','🏅','Competitions','Register and write competition papers');
  if(onLec&&mgr)addTile('compStaffLink','comp-staff.html','🏅','Competition Papers','Set papers and see marks');
