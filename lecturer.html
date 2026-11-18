@@ -50,6 +50,7 @@
 <h3>New assessment</h3>
 <form id="af">
 <label>Subject</label><select name="sub" id="asub"></select>
+<label>Grade (only learners of this grade will see the assessment)</label><select name="grade" id="agrade"></select>
 <label>Title</label><input name="ttl" required>
 <label>Instructions</label><textarea name="desc"></textarea>
 <div class="row">
@@ -86,6 +87,12 @@ let cur = null, SUBJ = [];
 let AMD = { a: null, S: [], AM: {}, info: { hasMemo: false, memoName: '', configured: true } };
 
 $('#lnk').textContent = location.href.replace('lecturer.html','index.html?register');
+
+// Grade choice: tutors must choose one grade. Admins, lecturers and the secret admin choose one grade or All grades.
+$('#agrade').innerHTML =
+  (u.role === 'tutor' ? '<option value="">Choose the grade</option>' : '<option value="all">All grades</option>') +
+  ['8','9','10','11','12'].map(g => `<option value="${g}">Grade ${g}</option>`).join('');
+$('#agrade').required = u.role === 'tutor';
 
 api('/subjects').then(d => {
   SUBJ = d.subjects.map(s => s.name);
@@ -129,6 +136,7 @@ $('#af').onsubmit = async e => {
       method: 'POST',
       body: JSON.stringify({
         subject: f.sub.value,
+        grade: f.grade.value,
         title: f.ttl.value,
         desc: f.desc.value,
         total: +f.total.value,
@@ -431,10 +439,12 @@ async function render() {
 
     window.LL = L;
 
+    // Learners shown for an assessment: those who submitted, plus those of its subject and grade.
+    // (If the server does not send the learner's grade, the grade is not used to filter.)
     const forA = a => L.filter(l =>
-      !a.subject ||
-      (l.subjects || []).includes(a.subject) ||
-      S.some(x => x.aid === a.id && x.uid === l.id)
+      S.some(x => x.aid === a.id && x.uid === l.id) ||
+      ((!a.grade || l.grade === undefined || l.grade === a.grade) &&
+       (!a.subject || (l.subjects || []).includes(a.subject)))
     );
 
     $('#al').innerHTML = A.map(a => {
@@ -445,7 +455,7 @@ async function render() {
           <h3>${esc(a.title)}</h3>
           <span class="tag">${n}/${forA(a).length} submitted</span>
         </div>
-        <p class="m">${esc(a.subject || 'All subjects')}</p>
+        <p class="m">${esc(a.subject || 'All subjects')} · ${a.grade ? 'Grade ' + esc(a.grade) : 'All grades'}</p>
         <p>${esc(a.desc)}</p>
         <p class="m">Due ${fmt(a.due)} · ${a.total} marks</p>
         ${fileLink(a.file)}
@@ -491,7 +501,7 @@ async function render() {
     const sel = $('#sel');
 
     sel.innerHTML = A.map(a =>
-      `<option value="${a.id}">${esc((a.subject ? a.subject + ' – ' : '') + a.title)}</option>`
+      `<option value="${a.id}">${esc((a.subject ? a.subject + ' – ' : '') + (a.grade ? 'Gr ' + a.grade + ' – ' : '') + a.title)}</option>`
     ).join('');
 
     if (cur && A.some(a => a.id === cur)) sel.value = cur;
