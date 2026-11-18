@@ -122,13 +122,45 @@ async function autoAcceptLearners() {
   }
 }
 
+// ---- Reset support: the secret admin account is saved before a wipe and put back afterwards ----
+let KEPT_ADMIN = null;
+async function restoreKeptAdmin() {
+  if (!KEPT_ADMIN) return;
+  try {
+    const want = ['id', 'name', 'email', 'password_hash', 'role', 'status', 'last_login', 'photo', 'bio', 'gender'];
+    const have = (await pool.query(
+      "SELECT column_name FROM information_schema.columns WHERE table_name='rise_users'")).rows.map(r => r.column_name);
+    const keys = want.filter(k => have.includes(k) && KEPT_ADMIN[k] !== undefined);
+    // If the seeded admin uses the same email, remove it so the secret admin comes back as it was
+    await pool.query('DELETE FROM rise_users WHERE email=$1 AND id<>$2', [KEPT_ADMIN.email, KEPT_ADMIN.id]);
+    await pool.query(
+      'INSERT INTO rise_users(' + keys.map(k => '"' + k + '"').join(',') + ') VALUES(' + keys.map((_, i) => '$' + (i + 1)).join(',') + ') ON CONFLICT DO NOTHING',
+      keys.map(k => KEPT_ADMIN[k]));
+    await pool.query(
+      "INSERT INTO rise_settings(key,value) VALUES('secret_admin_used',$1) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value",
+      [KEPT_ADMIN.id]);
+    console.log('Secret admin kept after reset: ' + KEPT_ADMIN.email);
+  } catch (e) {
+    console.error('Could not restore the secret admin after reset:', e.message);
+  }
+  KEPT_ADMIN = null;
+}
+
 async function init() {
   if (!process.env.DATABASE_URL) throw Error('DATABASE_URL is not configured');
 
   // FRESH START: set RESET_DATABASE=true on Render for ONE deploy to wipe everything.
   // Remove the variable afterwards, otherwise data is wiped on every restart.
+  // The secret admin account is saved first and put back after the wipe.
   if (process.env.RESET_DATABASE === 'true') {
     console.log('RESET_DATABASE=true -> wiping all data');
+    try {
+      const s = await pool.query("SELECT value FROM rise_settings WHERE key='secret_admin_used'");
+      if (s.rowCount) {
+        const k = await pool.query('SELECT * FROM rise_users WHERE id=$1', [s.rows[0].value]);
+        if (k.rowCount) KEPT_ADMIN = k.rows[0];
+      }
+    } catch (e) { console.error('Could not read the secret admin before reset:', e.message); }
     await pool.query('DROP TABLE IF EXISTS rise_timetable, rise_signoffs, rise_work_views, rise_signoff_notices, rise_notify_log, rise_applications, rise_comp_subs, rise_comp_papers, rise_comp_regs, rise_settings, rise_video_log, rise_passes, rise_resources, rise_submissions, rise_assessments, rise_users CASCADE');
     await pool.query('DROP SEQUENCE IF EXISTS rise_student_seq');
   }
@@ -1827,6 +1859,93 @@ app.patch('/api/admin/applications/:id', secretAdminOnly, async (req, res) => {
       if (a.user_id) await pool.query('UPDATE rise_users SET subjects=$2 WHERE id=$1', [a.user_id, subs]);
       return res.json({ ok: true });
     }
+    if (action === 'edit') {
+      // Change any detail of an application. If the person has already registered, their account is updated too.
+      // Body: { action:'edit', fields:{ name, cell, saId, grade, parentName, province, district, school, subjects,   (learners)
+      //                                 name, email, cell, saId, province, district, teaching:[{school,subjects[]}] } (tutors) }
+      // The student number is never changed, because learners log in with it.
+      const f = req.body.fields || {};
+      const set = {};   // rise_applications columns
+      const uset = {};  // rise_users columns (only used when the person has registered)
+
+      if (f.name !== undefined) {
+        const v = String(f.name).replace(/\s+/g, ' ').trim().slice(0, 120);
+        if (v.length < 2) return res.status(400).json({ error: 'Enter the full name.' });
+        set.name = v; uset.name = v;
+      }
+      if (f.email !== undefined && a.type === 'tutor') {
+        const v = String(f.email).trim().toLowerCase().slice(0, 200);
+        if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)) return res.status(400).json({ error: 'Enter a valid email address.' });
+        const dupA = await pool.query(
+          "SELECT 1 FROM rise_applications WHERE type='tutor' AND LOWER(email)=$1 AND id<>$2 AND status<>'rejected'", [v, a.id]);
+        const dupU = await pool.query('SELECT 1 FROM rise_users WHERE email=$1 AND id IS DISTINCT FROM $2', [v, a.user_id]);
+        if (dupA.rowCount || dupU.rowCount) return res.status(409).json({ error: 'That email is already used.' });
+        set.email = v; uset.email = v;
+      }
+      if (f.cell !== undefined) {
+        if (!waNumber(f.cell)) return res.status(400).json({ error: 'Enter a valid South African cell number, for example 082 123 4567.' });
+        set.cell = String(f.cell).trim().slice(0, 30);
+        if (a.type === 'learner') uset.parent_cell = set.cell;
+      }
+      if (f.saId !== undefined) {
+        const v = String(f.saId).replace(/\s/g, '');
+        if (!validSaId(v)) return res.status(400).json({ error: 'The SA ID number is not valid. It must be 13 digits.' });
+        const dup = await pool.query('SELECT 1 FROM rise_applications WHERE type=$1 AND sa_id=$2 AND id<>$3', [a.type, v, a.id]);
+        if (dup.rowCount) return res.status(409).json({ error: 'Another application already has this ID number.' });
+        set.sa_id = v;
+      }
+      if (f.grade !== undefined && a.type === 'learner') {
+        if (!GRADES.includes(String(f.grade))) return res.status(400).json({ error: 'Choose a grade from 8 to 12.' });
+        set.grade = String(f.grade);
+      }
+      if (f.parentName !== undefined && a.type === 'learner') {
+        const v = String(f.parentName).replace(/\s+/g, ' ').trim().slice(0, 120);
+        if (v.length < 2) return res.status(400).json({ error: 'Enter the parent or guardian\'s full name.' });
+        set.parent_name = v;
+      }
+      if (f.province !== undefined) {
+        const v = PROVINCES.find(p => p.toLowerCase() === String(f.province).toLowerCase());
+        if (!v) return res.status(400).json({ error: 'Choose a valid province.' });
+        set.province = v; uset.province = v;
+      }
+      if (f.district !== undefined) {
+        const v = String(f.district).replace(/\s+/g, ' ').trim().slice(0, 80);
+        if (v.length < 2) return res.status(400).json({ error: 'Enter the district.' });
+        set.district = v; uset.district = v;
+      }
+      if (f.school !== undefined && a.type === 'learner') {
+        const v = String(f.school).replace(/\s+/g, ' ').trim().slice(0, 120);
+        if (v.length < 2) return res.status(400).json({ error: 'Enter the school.' });
+        set.school = v; uset.school = v;
+      }
+      if (f.subjects !== undefined && a.type === 'learner') {
+        const v = cleanSubjects(f.subjects);
+        if (!v.length) return res.status(400).json({ error: 'Choose at least one valid subject.' });
+        set.subjects = v; uset.subjects = v;
+      }
+      if (f.teaching !== undefined && a.type === 'tutor') {
+        const t = cleanTeaching(f.teaching);
+        if (!t.length) return res.status(400).json({ error: 'Enter at least one school.' });
+        const bare = t.find(x => !x.subjects.length);
+        if (bare) return res.status(400).json({ error: 'Choose at least one valid subject for ' + bare.school + '.' });
+        set.teaching = t; uset.teaching = t;
+        set.schools = teachingSchools(t); uset.schools = set.schools;
+        set.subjects = teachingSubjects(t); uset.subjects = set.subjects;
+      }
+
+      if (!Object.keys(set).length) return res.status(400).json({ error: 'Nothing to change.' });
+
+      const run = async (table, obj, key) => {
+        const cols = Object.keys(obj);
+        if (!cols.length) return;
+        const sets = cols.map((c, i) => c + '=$' + (i + 2) + (c === 'teaching' ? '::jsonb' : ''));
+        const vals = cols.map(c => c === 'teaching' ? JSON.stringify(obj[c]) : obj[c]);
+        await pool.query('UPDATE ' + table + ' SET ' + sets.join(',') + ' WHERE id=$1', [key, ...vals]);
+      };
+      await run('rise_applications', set, a.id);
+      if (a.user_id) await run('rise_users', uset, a.user_id);
+      return res.json({ ok: true });
+    }
     res.status(400).json({ error: 'Invalid action' });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -2137,6 +2256,7 @@ app.patch('/api/profile/me', staff, async (req, res) => {
 init()
   .then(() => ensureComp())
   .then(() => ensureApps())
+  .then(() => restoreKeptAdmin())
   .then(() => {
     require('./signoff')({ app, pool, anyUser, admin, id });
     require('./timetable')({ app, pool, anyUser, secretAdminOnly, canDecideApps, id });
