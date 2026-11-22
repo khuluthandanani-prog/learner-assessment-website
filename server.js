@@ -874,8 +874,8 @@ app.patch('/api/admin/tutors/:id', admin, async (req, res) => {
   }
 });
 
-// Reset a junior tutor's password (admins and lecturers). Give the tutor the new password in person or by phone.
-app.patch('/api/admin/tutors/:id/password', admin, async (req, res) => {
+// Reset a junior tutor's password. SECRET ADMIN ONLY. Give the tutor the new password in person or by phone.
+app.patch('/api/admin/tutors/:id/password', secretAdminOnly, async (req, res) => {
   try {
     const pw = String(req.body.password || '');
     if (pw.length < 6) return res.status(400).json({ error: 'Password must be 6+ characters' });
@@ -1877,6 +1877,18 @@ app.patch('/api/admin/applications/:id', secretAdminOnly, async (req, res) => {
     }
     if (action === 'resend') {
       return res.status(400).json({ error: 'WhatsApp messages are switched off.' });
+    }
+    if (action === 'resetPassword') {
+      // Secret admin only (this whole handler is secretAdminOnly). Sets a new password for a registered tutor.
+      if (a.type !== 'tutor') return res.status(400).json({ error: 'Only tutor passwords can be reset here.' });
+      if (!a.user_id) return res.status(409).json({ error: 'This tutor has not registered yet, so there is no password to reset.' });
+      const pw = String(req.body.password || '');
+      if (pw.length < 6) return res.status(400).json({ error: 'The password must be at least 6 characters.' });
+      const r = await pool.query(
+        "UPDATE rise_users SET password_hash=$1 WHERE id=$2 AND role='tutor'",
+        [await bcrypt.hash(pw, 12), a.user_id]);
+      if (!r.rowCount) return res.status(404).json({ error: 'Tutor account not found.' });
+      return res.json({ ok: true });
     }
     if (action === 'edit') {
       // "Edit all details": only the fields that were sent are changed. Each one is checked first.
