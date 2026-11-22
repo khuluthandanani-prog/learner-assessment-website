@@ -122,13 +122,45 @@ async function autoAcceptLearners() {
   }
 }
 
+// ---- Reset support: the secret admin account is saved before a wipe and put back afterwards ----
+let KEPT_ADMIN = null;
+async function restoreKeptAdmin() {
+  if (!KEPT_ADMIN) return;
+  try {
+    const want = ['id', 'name', 'email', 'password_hash', 'role', 'status', 'last_login', 'photo', 'bio', 'gender'];
+    const have = (await pool.query(
+      "SELECT column_name FROM information_schema.columns WHERE table_name='rise_users'")).rows.map(r => r.column_name);
+    const keys = want.filter(k => have.includes(k) && KEPT_ADMIN[k] !== undefined);
+    // If the seeded admin uses the same email, remove it so the secret admin comes back as it was
+    await pool.query('DELETE FROM rise_users WHERE email=$1 AND id<>$2', [KEPT_ADMIN.email, KEPT_ADMIN.id]);
+    await pool.query(
+      'INSERT INTO rise_users(' + keys.map(k => '"' + k + '"').join(',') + ') VALUES(' + keys.map((_, i) => '$' + (i + 1)).join(',') + ') ON CONFLICT DO NOTHING',
+      keys.map(k => KEPT_ADMIN[k]));
+    await pool.query(
+      "INSERT INTO rise_settings(key,value) VALUES('secret_admin_used',$1) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value",
+      [KEPT_ADMIN.id]);
+    console.log('Secret admin kept after reset: ' + KEPT_ADMIN.email);
+  } catch (e) {
+    console.error('Could not restore the secret admin after reset:', e.message);
+  }
+  KEPT_ADMIN = null;
+}
+
 async function init() {
   if (!process.env.DATABASE_URL) throw Error('DATABASE_URL is not configured');
 
   // FRESH START: set RESET_DATABASE=true on Render for ONE deploy to wipe everything.
   // Remove the variable afterwards, otherwise data is wiped on every restart.
+  // The secret admin account is saved first and put back after the wipe.
   if (process.env.RESET_DATABASE === 'true') {
     console.log('RESET_DATABASE=true -> wiping all data');
+    try {
+      const s = await pool.query("SELECT value FROM rise_settings WHERE key='secret_admin_used'");
+      if (s.rowCount) {
+        const k = await pool.query('SELECT * FROM rise_users WHERE id=$1', [s.rows[0].value]);
+        if (k.rowCount) KEPT_ADMIN = k.rows[0];
+      }
+    } catch (e) { console.error('Could not read the secret admin before reset:', e.message); }
     await pool.query('DROP TABLE IF EXISTS rise_timetable, rise_signoffs, rise_work_views, rise_signoff_notices, rise_notify_log, rise_applications, rise_comp_subs, rise_comp_papers, rise_comp_regs, rise_settings, rise_video_log, rise_passes, rise_resources, rise_submissions, rise_assessments, rise_users CASCADE');
     await pool.query('DROP SEQUENCE IF EXISTS rise_student_seq');
   }
@@ -795,6 +827,16 @@ app.patch('/api/admin/users/:id/subjects', admin, async (req, res) => {
   }
 });
 
+// Remove the parent login of a learner (for example when the parent forgot the password). The parent can then register again.
+app.delete('/api/admin/users/:id/parent', admin, async (req, res) => {
+  try {
+    await pool.query("DELETE FROM rise_users WHERE role='parent' AND learner_id=$1", [req.params.id]);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.delete('/api/admin/users/:id', admin, async (req, res) => {
   try {
     await pool.query("DELETE FROM rise_users WHERE role='parent' AND learner_id=$1", [req.params.id]);
@@ -826,6 +868,19 @@ app.patch('/api/admin/tutors/:id', admin, async (req, res) => {
     if (!['pending', 'approved', 'blocked'].includes(req.body.status))
       return res.status(400).json({ error: 'Invalid status' });
     await pool.query("UPDATE rise_users SET status=$1 WHERE id=$2 AND role='tutor'", [req.body.status, req.params.id]);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Reset a junior tutor's password (admins and lecturers). Give the tutor the new password in person or by phone.
+app.patch('/api/admin/tutors/:id/password', admin, async (req, res) => {
+  try {
+    const pw = String(req.body.password || '');
+    if (pw.length < 6) return res.status(400).json({ error: 'Password must be 6+ characters' });
+    const r = await pool.query("UPDATE rise_users SET password_hash=$1 WHERE id=$2 AND role='tutor'", [await bcrypt.hash(pw, 12), req.params.id]);
+    if (!r.rowCount) return res.status(404).json({ error: 'Tutor not found.' });
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -2253,6 +2308,7 @@ app.patch('/api/profile/me', staff, async (req, res) => {
 init()
   .then(() => ensureComp())
   .then(() => ensureApps())
+  .then(() => restoreKeptAdmin())
   .then(() => {
     require('./signoff')({ app, pool, anyUser, admin, id });
     require('./timetable')({ app, pool, anyUser, secretAdminOnly, canDecideApps, id });
