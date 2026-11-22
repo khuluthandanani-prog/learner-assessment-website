@@ -11,7 +11,7 @@
  </table>
 </div>
 
-<p>Open the documents, check them, then accept or reject. Learners are accepted automatically <b id="ah">24</b> hours after they apply, unless you accept or reject them first. Tutor applications always need you to accept them. Use <b>Edit all details</b> to change the grade, name, ID number, cell, parent name, location or subjects of a learner, or the name, email, cell, ID number and location of a tutor. A tutor can teach at any number of schools, and each school has its own subjects: change those with <b>Edit schools</b>. Learners only see the notes, videos and assessments for a subject the tutor teaches <b>at the learner's school</b>, so the school names must match exactly.</p>
+<p>Open the documents, check them, then accept or reject. Learners are accepted automatically <b id="ah">24</b> hours after they apply, unless you accept or reject them first. Tutor applications always need you to accept them. Use <b>Edit all details</b> to change the grade, name, ID number, cell, parent name, location or subjects of a learner, or the name, email, cell, ID number and location of a tutor. A tutor can teach at any number of schools, and each school has its own subjects: change those with <b>Edit schools</b>. Use <b>Reset password</b> to give a registered tutor a new password. Learners only see the notes, videos and assessments for a subject the tutor teaches <b>at the learner's school</b>, so the school names must match exactly.</p>
 <p><b>Parent verification:</b> open <b>Parent selfie</b>, check that it shows a real adult face, then press <b>Verify parent</b>. A parent can only register for parent access after you verify. Press <b>Reject parent</b> to refuse (this also removes any parent login that exists).</p>
 <p id="noDecide" class="card" hidden style="padding:10px 14px"><b>View only.</b> Only the secret admin can accept, reject or edit applications.</p>
 <label>Show: <select id="flt" onchange="draw()"><option value="all">All</option><option value="pending">Waiting for a decision</option><option value="learner">Learners</option><option value="tutor">Tutors</option></select></label>
@@ -96,6 +96,7 @@ function draw(){
    (a.type==='learner'&&a.parentStatus!=='verified'?`<button class="btn sm" onclick="parentAct('${a.id}','verified')">Verify parent</button> `:'')+
    (a.type==='learner'&&a.parentStatus!=='rejected'?`<button class="btn sm ghost" onclick="parentAct('${a.id}','rejected')">Reject parent</button> `:'')+
    `<button class="btn sm" onclick="editAll('${a.id}')">Edit all details</button> `+
+   (a.type==='tutor'&&a.registered?`<button class="btn sm ghost" onclick="resetPw('${a.id}')">Reset password</button> `:'')+
    (a.type==='learner'?`<button class="btn sm ghost" onclick="editLoc('${a.id}')">Edit location</button> `:`<button class="btn sm ghost" onclick="editSchools('${a.id}')">Edit schools</button> `)+
    `<button class="btn sm ghost" onclick="editSub('${a.id}')">Edit subjects</button>`;
   return `<tr><td>${a.type==='learner'?'Learner':'Tutor'}</td><td>${esc(a.name)}</td><td><b>${esc(a.studentNumber||'—')}</b></td><td>${esc(a.grade||'—')}</td><td>${esc((a.subjects||[]).join(', ')||'—')}</td><td>${placeCell(a)}</td><td>${parentCell(a)}</td><td>${esc(a.saId)}</td><td>${esc(a.cell)}</td><td>${esc(a.email||'—')}</td><td>${fmt(a.at)}</td><td>${docs}</td><td>${statusCell(a)}</td><td>${CAN?acts:'<small>View only</small>'}</td></tr>`}).join('')}</table></div></div>`
@@ -225,6 +226,17 @@ async function editSub(id){
  if(v===null)return;
  await call(id,{action:'subjects',subjects:v.split(',').map(s=>s.trim()).filter(Boolean)});
  render();
+}
+
+// Reset a registered tutor's password (secret admin only: the server refuses everyone else)
+async function resetPw(id){
+ const a=D.find(x=>x.id===id);if(!a)return;
+ const pw=prompt('New password for '+a.name+' (at least 6 characters).\nGive it to the tutor privately.');
+ if(pw===null)return;
+ if(pw.length<6){alert('The password must be at least 6 characters.');return}
+ if(!confirm('Change the password of '+a.name+' now? The old password will stop working.'))return;
+ const r=await call(id,{action:'resetPassword',password:pw});
+ if(r)alert('Password changed. The tutor can log in with the new password.');
 }
 loadSwitch();
 render();
